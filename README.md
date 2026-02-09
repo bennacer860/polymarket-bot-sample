@@ -1,9 +1,10 @@
 # Polymarket Bot
 
-A Python bot for Polymarket with two modes:
+A Python bot for Polymarket with multiple modes:
 
 1. **Single Trade Mode** – Place a test limit order given an event slug, price, and direction
 2. **Trading Bot Mode** – For 15-min crypto Up/Down events: wait for event end, detect winning outcome, place 1 share @ 0.999 limit order on the winning side
+3. **Book Monitor Mode** – Monitor WebSocket orderbook updates and log bids placed at the 0.999 price level
 
 ## Setup
 
@@ -68,6 +69,38 @@ The bot will:
 2. Wait until the event end time + resolution buffer
 3. Poll for resolution and determine the winning outcome
 4. Place a limit order for 1 share @ $0.999 on the winning side
+
+### Book Monitor (Analyze 0.999 Price Bids)
+
+Monitor the Polymarket CLOB WebSocket for bids placed at the 0.999 price level. This helps analyze when traders place their bids at this specific price point.
+
+First, get the token ID for your market:
+
+```bash
+python get_token_ids.py --slug <event-slug>
+```
+
+Then monitor the orderbook:
+
+```bash
+python monitor_book_bids.py --token-id <token-id>
+```
+
+The script will:
+1. Connect to the Polymarket CLOB WebSocket
+2. Subscribe to orderbook updates for the specified token
+3. Log every new bid placed at the 0.999 price level
+4. Save data to `bids_0999.csv` with millisecond timestamps for analysis
+
+The CSV output includes:
+- `timestamp_ms`: Unix timestamp in milliseconds
+- `timestamp_iso`: ISO 8601 formatted timestamp with milliseconds
+- `price`: The bid price (should be 0.999)
+- `size`: Total size of bids at this price level
+- `size_change`: The increase in size from the previous update
+- `token_id`: The token being monitored
+
+You can then use this CSV file with any data visualization tool (Excel, pandas, matplotlib, etc.) to analyze the timing patterns of 0.999 bids.
 
 ## Configuration
 
