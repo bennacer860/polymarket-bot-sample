@@ -5,3 +5,4 @@ __pycache__/
 .venv/
 venv/
 bids_*.csv
+bid_analysis_*.png

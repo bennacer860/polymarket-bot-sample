@@ -102,6 +102,15 @@ The CSV output includes:
 
 You can then use this CSV file with any data visualization tool (Excel, pandas, matplotlib, etc.) to analyze the timing patterns of 0.999 bids.
 
+To quickly visualize the data, use the included script:
+
+```bash
+pip install pandas matplotlib  # Install visualization dependencies
+python visualize_bids.py bids_0999.csv
+```
+
+This will generate charts and statistics showing bid activity patterns over time. See `BOOK_MONITOR.md` for more details.
+
 ## Configuration
 
 See `.env.example` for required variables. You need a Polymarket account with funded USDC and the appropriate wallet setup (EOA, email/Magic, or browser proxy).

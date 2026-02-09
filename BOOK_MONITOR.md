@@ -77,9 +77,36 @@ timestamp_ms,timestamp_iso,price,size,size_change,token_id
 
 ## Visualization
 
-You can visualize the data using:
+### Quick Visualization (Recommended)
+
+The easiest way to visualize your data is using the included script:
+
+```bash
+# Install visualization dependencies (only needed once)
+pip install pandas matplotlib
+
+# Generate charts
+python visualize_bids.py bids_0999.csv
+```
+
+This will create three PNG files:
+- `bid_analysis_total_size.png` - Total bid size over time
+- `bid_analysis_new_bids.png` - New bid activity (bar chart)
+- `bid_analysis_cumulative.png` - Cumulative number of bid events
+
+Plus a summary with statistics like:
+- Total bid events
+- Time range and duration
+- Min/max/mean bid sizes
+- Total increase and largest single increase
+
+### Custom Analysis (Python)
+
+You can also create custom visualizations using pandas and matplotlib:
 
 ### Python (pandas + matplotlib)
+
+For custom analysis:
 
 ```python
 import pandas as pd
