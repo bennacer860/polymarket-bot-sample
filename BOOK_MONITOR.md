@@ -30,17 +30,31 @@ Example usage:
 
 ### 2. Monitor Orderbook
 
+**Option A: WebSocket (Recommended)**
+
 ```bash
 python monitor_book_bids.py --token-id <token-id>
 ```
 
-The script will:
-- Connect to the Polymarket CLOB WebSocket
-- Subscribe to orderbook updates for the token
+**Option B: REST API Polling (Alternative)**
+
+If you have issues with WebSocket:
+
+```bash
+python monitor_book_bids_rest.py --token-id <token-id> --interval 1.0
+```
+
+The REST version polls the orderbook every second (configurable) instead of using WebSocket. It's simpler but less efficient.
+
+**Output:**
+
+The monitor will:
+- Connect to Polymarket CLOB (WebSocket or REST API)
+- Monitor orderbook updates for the token
 - Log every new bid at 0.999 price
 - Save data to `bids_0999.csv`
 
-Output:
+Console output:
 ```
 Connecting to wss://ws-subscriptions-clob.polymarket.com/ws/market
 Monitoring token: 0x123abc...

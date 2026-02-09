@@ -72,7 +72,11 @@ The bot will:
 
 ### Book Monitor (Analyze 0.999 Price Bids)
 
-Monitor the Polymarket CLOB WebSocket for bids placed at the 0.999 price level. This helps analyze when traders place their bids at this specific price point.
+Monitor the Polymarket CLOB for bids placed at the 0.999 price level. This helps analyze when traders place their bids at this specific price point.
+
+#### Option 1: WebSocket Monitor (Recommended)
+
+Real-time monitoring using WebSocket connection:
 
 First, get the token ID for your market:
 
@@ -86,11 +90,22 @@ Then monitor the orderbook:
 python monitor_book_bids.py --token-id <token-id>
 ```
 
-The script will:
-1. Connect to the Polymarket CLOB WebSocket
-2. Subscribe to orderbook updates for the specified token
-3. Log every new bid placed at the 0.999 price level
-4. Save data to `bids_0999.csv` with millisecond timestamps for analysis
+#### Option 2: REST API Polling (Alternative)
+
+If WebSocket connection is difficult, use the REST API polling version:
+
+```bash
+python monitor_book_bids_rest.py --token-id <token-id> --interval 1.0
+```
+
+This polls the orderbook every second (or your specified interval). It's simpler but less efficient than WebSocket.
+
+#### Data Output
+
+Both scripts will:
+1. Monitor the specified token's orderbook (WebSocket) or poll it (REST)
+2. Log every new bid placed at the 0.999 price level
+3. Save data to `bids_0999.csv` with millisecond timestamps for analysis
 
 The CSV output includes:
 - `timestamp_ms`: Unix timestamp in milliseconds
