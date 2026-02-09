@@ -74,6 +74,21 @@ Subscribed to book updates for 0x123abc...
 
 ### 3. Analyze Data
 
+**Quick Text Analysis (No dependencies)**
+
+```bash
+python analyze_bids.py bids_0999.csv
+```
+
+This shows statistics without requiring visualization libraries:
+- Total bid events and time range
+- Size statistics (min, max, average, final)
+- Bid change analysis
+- Frequency metrics
+- Top 5 largest increases
+
+**Visual Analysis (Requires pandas & matplotlib)**
+
 The CSV file contains:
 - `timestamp_ms`: Unix timestamp in milliseconds (for precise timing analysis)
 - `timestamp_iso`: Human-readable timestamp (e.g., 2026-02-09T01:23:45.678Z)

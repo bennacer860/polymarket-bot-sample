@@ -120,6 +120,10 @@ You can then use this CSV file with any data visualization tool (Excel, pandas, 
 To quickly visualize the data, use the included script:
 
 ```bash
+# Quick text analysis (no dependencies)
+python analyze_bids.py bids_0999.csv
+
+# Visual charts (requires pandas & matplotlib)
 pip install pandas matplotlib  # Install visualization dependencies
 python visualize_bids.py bids_0999.csv
 ```
