@@ -232,9 +232,9 @@ class MultiEventMonitor:
                 best_bid = change.get("best_bid", "N/A")
                 best_ask = change.get("best_ask", "N/A")
 
-                # Check if this price level matches our target price
-                if abs(price - TARGET_PRICE) < 0.0001:
-                    # Determine if this is a bid or ask based on the price level
+                # Check if the best bid or ask is at our target price
+                if best_bid == str(TARGET_PRICE) or best_ask == str(TARGET_PRICE):
+                    # Determine if this specific price level is a bid or ask
                     # Bids are at or below best_bid, asks are at or above best_ask
                     side = None
                     try:
@@ -246,9 +246,11 @@ class MultiEventMonitor:
                         elif best_ask_float and price >= best_ask_float:
                             side = "ASK"
                         else:
-                            # If we can't determine, default to BID for target price 0.999
-                            # (since it's typically a high bid price)
-                            side = "BID"
+                            # If we can't determine, check which target was hit
+                            if best_bid == str(TARGET_PRICE):
+                                side = "BID"
+                            else:
+                                side = "ASK"
                     except (ValueError, TypeError):
                         side = "UNKNOWN"
 
@@ -269,7 +271,7 @@ class MultiEventMonitor:
 
                         # Log to console
                         logger.info(
-                            "[%s] New %s at %.3f for %s (slug: %s): size=%.2f, change=+%.2f",
+                            "[%s] New %s at %.3f for %s (slug: %s): size=%.2f, change=+%.2f (best_bid=%s, best_ask=%s)",
                             timestamp_iso,
                             side,
                             price,
@@ -277,6 +279,8 @@ class MultiEventMonitor:
                             slug,
                             size,
                             size_change,
+                            best_bid,
+                            best_ask,
                         )
 
                         # Write to CSV

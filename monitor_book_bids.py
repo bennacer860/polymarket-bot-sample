@@ -98,9 +98,9 @@ class BookMonitor:
                 best_bid = change.get("best_bid", "N/A")
                 best_ask = change.get("best_ask", "N/A")
 
-                # Check if this price level matches our target price
-                if abs(price - TARGET_PRICE) < 0.0001:
-                    # Determine if this is a bid or ask based on the price level
+                # Check if the best bid or ask is at our target price
+                if best_bid == str(TARGET_PRICE) or best_ask == str(TARGET_PRICE):
+                    # Determine if this specific price level is a bid or ask
                     # Bids are at or below best_bid, asks are at or above best_ask
                     side = None
                     try:
@@ -112,9 +112,11 @@ class BookMonitor:
                         elif best_ask_float and price >= best_ask_float:
                             side = "ASK"
                         else:
-                            # If we can't determine, default to BID for target price 0.999
-                            # (since it's typically a high bid price)
-                            side = "BID"
+                            # If we can't determine, check which target was hit
+                            if best_bid == str(TARGET_PRICE):
+                                side = "BID"
+                            else:
+                                side = "ASK"
                     except (ValueError, TypeError):
                         side = "UNKNOWN"
 
@@ -134,7 +136,7 @@ class BookMonitor:
                         timestamp_est = now.astimezone(est_timezone).isoformat()
 
                         # Log to console
-                        print(f"\n[{timestamp_iso}] New {side} at {price}")
+                        print(f"\n[{timestamp_iso}] New {side} at {price} (best_bid={best_bid}, best_ask={best_ask})")
                         print(f"  Size: {size:.2f} (change: +{size_change:.2f})")
                         print(f"  Token: {self.token_id}")
                         print(f"  Event Slug: {event_slug}")

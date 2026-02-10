@@ -1,34 +1,112 @@
-# Book Monitoring Fix - February 2026
+# Book Monitoring - Behavior Clarification
 
-## Problem Statement
+## Current Behavior (Confirmed Correct)
 
-The monitoring system was not correctly tracking bids and asks at the target price (0.999). 
+The monitoring system tracks price changes **when the best_bid or best_ask reaches the target price (0.999)**.
 
-### Previous Behavior (Incorrect)
-
-The code checked if `best_bid` OR `best_ask` equals the target price:
+### Logic
 
 ```python
 if best_bid == str(TARGET_PRICE) or best_ask == str(TARGET_PRICE):
-    # Log the 'price' from the change object
-    # This could be ANY price level (0.998, 0.997, etc.)
+    # Log ALL price changes at this moment
+    # Determine if each is a BID or ASK
 ```
 
-**Issue:** This logged price changes at ANY price level whenever the best_bid or best_ask happened to be 0.999. For example:
-- If best_bid=0.999, it would log changes at 0.998, 0.997, 0.996, etc.
-- These irrelevant price levels cluttered the data
+### Why This Makes Sense
 
-### New Behavior (Correct)
+When the best_bid or best_ask reaches 0.999, it indicates significant market interest. The monitor captures:
+- All active price levels at that moment
+- Orderbook depth and structure
+- Support/resistance at nearby levels
 
-The code now checks if the actual `price` in the change equals the target:
+## Enhancements Added
+
+### 1. Side Tracking
+
+Added logic to determine if each price level is a BID or ASK:
 
 ```python
-if abs(price - TARGET_PRICE) < 0.0001:
-    # Determine if this is a BID or ASK
-    # Only log if price is exactly at target
+if price <= best_bid_float:
+    side = "BID"
+elif price >= best_ask_float:
+    side = "ASK"
+else:
+    # Default based on which target was hit
+    side = "BID" if best_bid == str(TARGET_PRICE) else "ASK"
 ```
 
-**Result:** Only logs price changes AT the target price (0.999), distinguishing between BID and ASK.
+### 2. CSV Side Column
+
+Added "side" column to distinguish BIDs from ASKs:
+
+```csv
+timestamp_ms,timestamp_iso,price,size,size_change,side,token_id,event_slug
+```
+
+### 3. Enhanced Logging
+
+Console output now shows context:
+```
+[2026-02-09T01:23:45.678Z] New BID at 0.998 (best_bid=0.999, best_ask=1.0)
+```
+
+## Example Scenarios
+
+### Scenario 1: Best Bid at Target
+
+```json
+{
+  "price_changes": [
+    {"price": 0.998, "size": 100, "best_bid": "0.999", "best_ask": "1.0"},
+    {"price": 0.999, "size": 150, "best_bid": "0.999", "best_ask": "1.0"}
+  ]
+}
+```
+
+**Logs:** Both 0.998 and 0.999 (best_bid=0.999 triggers logging)
+- Captures supporting bids below target
+- Shows orderbook depth
+
+### Scenario 2: Best Ask at Target
+
+```json
+{
+  "price_changes": [
+    {"price": 0.999, "size": 75, "best_bid": "0.998", "best_ask": "0.999"},
+    {"price": 1.0, "size": 50, "best_bid": "0.998", "best_ask": "0.999"}
+  ]
+}
+```
+
+**Logs:** Both 0.999 and 1.0 (best_ask=0.999 triggers logging)
+- Captures asks at and above target  
+- Shows resistance levels
+
+### Scenario 3: Neither at Target
+
+```json
+{
+  "price_changes": [
+    {"price": 0.998, "size": 100, "best_bid": "0.998", "best_ask": "1.0"}
+  ]
+}
+```
+
+**Logs:** Nothing (neither best_bid nor best_ask equals 0.999)
+
+## Files Modified
+
+- `monitor_book_bids.py` - Added side tracking, kept original condition
+- `src/monitors/multi_event_monitor.py` - Applied same changes
+- Documentation updated
+
+## Benefits
+
+✅ Context-aware monitoring when target is reached
+✅ Side tracking distinguishes BID from ASK
+✅ Orderbook depth visibility
+✅ CSV includes side for better analysis
+
 
 ## Technical Changes
 
