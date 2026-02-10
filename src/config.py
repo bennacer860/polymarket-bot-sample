@@ -23,3 +23,7 @@ RESOLUTION_BUFFER_SECONDS = 60  # Wait after endDate before polling for resoluti
 POLL_INTERVAL_SECONDS = 5
 POST_RESOLUTION_ORDER_PRICE = 0.999
 POST_RESOLUTION_ORDER_SIZE = 1.0
+
+# Monitor settings
+MARKET_STATUS_CHECK_INTERVAL = 60  # How often to check if markets are still active (seconds)
+MONITOR_TARGET_PRICE = 0.999  # Price level to monitor for bids
