@@ -58,6 +58,7 @@ class BookMonitor:
             self.csv_writer.writerow([
                 "timestamp_ms",
                 "timestamp_iso",
+                "timestamp_est",
                 "price",
                 "size",
                 "size_change",
@@ -147,6 +148,7 @@ class BookMonitor:
                         if self.csv_writer:
                             self.csv_writer.writerow([
                                 timestamp_ms,
+                                timestamp_iso,
                                 timestamp_est,
                                 price,
                                 size,

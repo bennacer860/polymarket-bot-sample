@@ -149,7 +149,8 @@ The monitors output CSV files with the following columns:
 | Column | Description |
 |--------|-------------|
 | `timestamp_ms` | Unix timestamp in milliseconds |
-| `timestamp_iso` | ISO timestamp in EST timezone |
+| `timestamp_iso` | ISO timestamp in UTC (with Z suffix) |
+| `timestamp_est` | ISO timestamp in EST timezone |
 | `price` | Price level of the order |
 | `size` | Size of the order |
 | `size_change` | Change in size from previous update |

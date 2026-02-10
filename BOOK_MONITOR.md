@@ -91,7 +91,8 @@ This shows statistics without requiring visualization libraries:
 
 The CSV file contains:
 - `timestamp_ms`: Unix timestamp in milliseconds (for precise timing analysis)
-- `timestamp_iso`: Human-readable timestamp (e.g., 2026-02-09T01:23:45.678Z)
+- `timestamp_iso`: Human-readable timestamp in UTC (e.g., 2026-02-09T01:23:45.678Z)
+- `timestamp_est`: Human-readable timestamp in EST (e.g., 2026-02-08T20:23:45.678-05:00)
 - `price`: Price level (0.999)
 - `size`: Total size of orders at this price level
 - `size_change`: Increase in size from previous update
@@ -101,9 +102,9 @@ The CSV file contains:
 
 Example CSV:
 ```csv
-timestamp_ms,timestamp_iso,price,size,size_change,side,token_id,event_slug
-1739060625678,2026-02-09T01:23:45.678Z,0.999,150.0,150.0,BID,0x123abc...,btc-15m-1707523200
-1739060652345,2026-02-09T01:24:12.345Z,0.999,75.0,75.0,ASK,0x123abc...,btc-15m-1707523200
+timestamp_ms,timestamp_iso,timestamp_est,price,size,size_change,side,token_id,event_slug
+1739060625678,2026-02-09T01:23:45.678Z,2026-02-08T20:23:45.678-05:00,0.999,150.0,150.0,BID,0x123abc...,btc-15m-1707523200
+1739060652345,2026-02-09T01:24:12.345Z,2026-02-08T20:24:12.345-05:00,0.999,75.0,75.0,ASK,0x123abc...,btc-15m-1707523200
 ```
 
 ## Visualization

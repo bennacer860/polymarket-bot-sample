@@ -11,6 +11,7 @@ import csv
 import sys
 import time
 from datetime import datetime
+from pytz import timezone
 
 from py_clob_client.client import ClobClient
 
@@ -54,6 +55,7 @@ class RestBookMonitor:
         self.csv_writer.writerow([
             "timestamp_ms",
             "timestamp_iso",
+            "timestamp_est",
             "price",
             "size",
             "size_change",
@@ -91,6 +93,10 @@ class RestBookMonitor:
                 timestamp_ms = int(now.timestamp() * 1000)
                 timestamp_iso = now.isoformat() + "Z"
                 
+                # Convert timestamp to EST
+                est_timezone = timezone("US/Eastern")
+                timestamp_est = now.astimezone(est_timezone).isoformat()
+                
                 # Log to console
                 print(f"\n[{timestamp_iso}] New bid at {TARGET_PRICE}")
                 print(f"  Size: {total_size:.2f} (change: +{size_change:.2f})")
@@ -101,6 +107,7 @@ class RestBookMonitor:
                     self.csv_writer.writerow([
                         timestamp_ms,
                         timestamp_iso,
+                        timestamp_est,
                         TARGET_PRICE,
                         total_size,
                         size_change,

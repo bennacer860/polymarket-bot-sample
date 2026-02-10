@@ -90,7 +90,8 @@ monitor.run_sync()
 ### Data Output
 CSV format with columns:
 - `timestamp_ms` - Unix timestamp in milliseconds
-- `timestamp_iso` - ISO timestamp in EST timezone
+- `timestamp_iso` - ISO timestamp in UTC (with Z suffix)
+- `timestamp_est` - ISO timestamp in EST timezone
 - `price` - Price level
 - `size` - Total size at price level
 - `size_change` - Change from previous update
