@@ -14,6 +14,7 @@ import json
 import sys
 from datetime import datetime
 from typing import Optional
+from pytz import timezone
 
 import websockets
 
@@ -93,9 +94,11 @@ class BookMonitor:
             try:
                 price = float(change.get("price", 0))
                 size = float(change.get("size", 0))
+                best_bid = change.get("best_bid", "N/A")
+                best_ask = change.get("best_ask", "N/A")
 
-                # Check if this price change is at our target price
-                if abs(price - TARGET_PRICE) < 0.0001:  # Account for floating point
+                # Check if the best bid or ask is at our target price
+                if best_bid == str(TARGET_PRICE) or best_ask == str(TARGET_PRICE):
                     # Calculate size change from previous
                     previous_size = self.previous_bids.get(price, 0.0)
                     size_change = size - previous_size
@@ -106,22 +109,30 @@ class BookMonitor:
                         now = datetime.utcnow()
                         timestamp_iso = now.isoformat() + "Z"
 
+                        # Convert timestamp to EST
+                        est_timezone = timezone("US/Eastern")
+                        timestamp_est = now.astimezone(est_timezone).isoformat()
+
                         # Log to console
                         print(f"\n[{timestamp_iso}] New price change at {price}")
                         print(f"  Size: {size:.2f} (change: +{size_change:.2f})")
                         print(f"  Token: {self.token_id}")
                         print(f"  Event Slug: {event_slug}")
+                        print(f"  Best Bid: {best_bid}")
+                        print(f"  Best Ask: {best_ask}")
 
                         # Write to CSV
                         if self.csv_writer:
                             self.csv_writer.writerow([
                                 timestamp_ms,
-                                timestamp_iso,
+                                timestamp_est,  # Save EST timestamp
                                 price,
                                 size,
                                 size_change,
                                 self.token_id,
-                                event_slug  # Add event slug to data rows
+                                event_slug,
+                                best_bid,
+                                best_ask
                             ])
                             self.csv_file.flush()
 
