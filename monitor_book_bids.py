@@ -63,6 +63,8 @@ class BookMonitor:
                 "size",
                 "size_change",
                 "side",
+                "best_bid",
+                "best_ask",
                 "token_id",
                 "event_slug"
             ])
@@ -154,6 +156,8 @@ class BookMonitor:
                                 size,
                                 size_change,
                                 side,
+                                best_bid,
+                                best_ask,
                                 self.token_id,
                                 event_slug
                             ])

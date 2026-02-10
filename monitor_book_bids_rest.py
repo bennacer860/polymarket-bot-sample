@@ -59,6 +59,8 @@ class RestBookMonitor:
             "price",
             "size",
             "size_change",
+            "best_bid",
+            "best_ask",
             "token_id"
         ])
         self.csv_file.flush()
@@ -76,6 +78,10 @@ class RestBookMonitor:
             
             if not book or not book.bids:
                 return
+            
+            # Get best bid and best ask
+            best_bid = float(book.bids[0].price) if book.bids else 0.0
+            best_ask = float(book.asks[0].price) if book.asks else 0.0
             
             # Find bids at target price
             total_size = 0.0
@@ -101,6 +107,8 @@ class RestBookMonitor:
                 print(f"\n[{timestamp_iso}] New bid at {TARGET_PRICE}")
                 print(f"  Size: {total_size:.2f} (change: +{size_change:.2f})")
                 print(f"  Token: {self.token_id}")
+                print(f"  Best Bid: {best_bid}")
+                print(f"  Best Ask: {best_ask}")
                 
                 # Write to CSV
                 if self.csv_writer:
@@ -111,6 +119,8 @@ class RestBookMonitor:
                         TARGET_PRICE,
                         total_size,
                         size_change,
+                        best_bid,
+                        best_ask,
                         self.token_id
                     ])
                     self.csv_file.flush()

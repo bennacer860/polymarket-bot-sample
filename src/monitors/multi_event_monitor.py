@@ -77,6 +77,8 @@ class MultiEventMonitor:
                 "size",
                 "size_change",
                 "side",
+                "best_bid",
+                "best_ask",
                 "token_id",
                 "event_slug"
             ])
@@ -294,6 +296,8 @@ class MultiEventMonitor:
                                 size,
                                 size_change,
                                 side,
+                                best_bid,
+                                best_ask,
                                 asset_id,
                                 slug
                             ])

@@ -155,6 +155,8 @@ The monitors output CSV files with the following columns:
 | `size` | Size of the order |
 | `size_change` | Change in size from previous update |
 | `side` | Whether this is a BID or ASK order |
+| `best_bid` | Best bid price at the time of this update |
+| `best_ask` | Best ask price at the time of this update |
 | `token_id` | Token ID (market identifier) |
 | `event_slug` | Event slug for the market |
 

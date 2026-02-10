@@ -97,14 +97,16 @@ The CSV file contains:
 - `size`: Total size of orders at this price level
 - `size_change`: Increase in size from previous update
 - `side`: Whether this is a BID or ASK order
+- `best_bid`: Best bid price at the time of this update
+- `best_ask`: Best ask price at the time of this update
 - `token_id`: Token being monitored
 - `event_slug`: Event slug identifier
 
 Example CSV:
 ```csv
-timestamp_ms,timestamp_iso,timestamp_est,price,size,size_change,side,token_id,event_slug
-1739060625678,2026-02-09T01:23:45.678Z,2026-02-08T20:23:45.678-05:00,0.999,150.0,150.0,BID,0x123abc...,btc-15m-1707523200
-1739060652345,2026-02-09T01:24:12.345Z,2026-02-08T20:24:12.345-05:00,0.999,75.0,75.0,ASK,0x123abc...,btc-15m-1707523200
+timestamp_ms,timestamp_iso,timestamp_est,price,size,size_change,side,best_bid,best_ask,token_id,event_slug
+1739060625678,2026-02-09T01:23:45.678Z,2026-02-08T20:23:45.678-05:00,0.999,150.0,150.0,BID,0.999,1.0,0x123abc...,btc-15m-1707523200
+1739060652345,2026-02-09T01:24:12.345Z,2026-02-08T20:24:12.345-05:00,0.999,75.0,75.0,ASK,0.998,0.999,0x123abc...,btc-15m-1707523200
 ```
 
 ## Visualization

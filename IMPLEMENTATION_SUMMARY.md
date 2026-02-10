@@ -96,6 +96,8 @@ CSV format with columns:
 - `size` - Total size at price level
 - `size_change` - Change from previous update
 - `side` - Whether this is a BID or ASK order
+- `best_bid` - Best bid price at the time of this update
+- `best_ask` - Best ask price at the time of this update
 - `token_id` - Market token identifier
 - `event_slug` - Event slug for the market
 
