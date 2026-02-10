@@ -49,7 +49,6 @@ class BookMonitor:
 
     def setup_csv(self):
         """Setup CSV file with headers."""
-        # Open the file in append mode ('a') instead of write mode ('w')
         self.csv_file = open(self.output_file, "a", newline="")
         self.csv_writer = csv.writer(self.csv_file)
 
@@ -61,7 +60,8 @@ class BookMonitor:
                 "price",
                 "size",
                 "size_change",
-                "token_id"
+                "token_id",
+                "event_slug"  # Add event slug to headers
             ])
             self.csv_file.flush()
         print(f"CSV output initialized (append mode): {self.output_file}")
@@ -83,21 +83,18 @@ class BookMonitor:
             print(f"Unexpected message format: {data}")
             return
 
-        # Extract bids from the update
-        # The exact structure depends on Polymarket's WebSocket message format
-        # Common formats include:
-        # {"asset_id": "...", "bids": [{"price": "0.999", "size": "100"}, ...]}
-
-        bids = data.get("bids", [])
+        # Extract price changes from the update
+        price_changes = data.get("price_changes", [])
         timestamp_ms = data.get("timestamp", int(datetime.utcnow().timestamp() * 1000))
+        event_slug = data.get("market", "unknown")  # Extract event slug
 
-        # Process each bid
-        for bid in bids:
+        # Process each price change
+        for change in price_changes:
             try:
-                price = float(bid.get("price", 0))
-                size = float(bid.get("size", 0))
+                price = float(change.get("price", 0))
+                size = float(change.get("size", 0))
 
-                # Check if this bid is at our target price
+                # Check if this price change is at our target price
                 if abs(price - TARGET_PRICE) < 0.0001:  # Account for floating point
                     # Calculate size change from previous
                     previous_size = self.previous_bids.get(price, 0.0)
@@ -110,9 +107,10 @@ class BookMonitor:
                         timestamp_iso = now.isoformat() + "Z"
 
                         # Log to console
-                        print(f"\n[{timestamp_iso}] New bid at {price}")
+                        print(f"\n[{timestamp_iso}] New price change at {price}")
                         print(f"  Size: {size:.2f} (change: +{size_change:.2f})")
                         print(f"  Token: {self.token_id}")
+                        print(f"  Event Slug: {event_slug}")
 
                         # Write to CSV
                         if self.csv_writer:
@@ -122,7 +120,8 @@ class BookMonitor:
                                 price,
                                 size,
                                 size_change,
-                                self.token_id
+                                self.token_id,
+                                event_slug  # Add event slug to data rows
                             ])
                             self.csv_file.flush()
 
@@ -130,7 +129,7 @@ class BookMonitor:
                     self.previous_bids[price] = size
 
             except (ValueError, KeyError) as e:
-                print(f"Error processing bid: {e}")
+                print(f"Error processing price change: {e}")
                 continue
 
     async def subscribe_and_monitor(self):
