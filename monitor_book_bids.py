@@ -44,7 +44,7 @@ class BookMonitor:
         self.token_id = token_id
         self.output_file = output_file
         self.ws_url = ws_url or WS_URL
-        self.previous_bids = {}  # Track previous bid sizes at each price level
+        self.previous_sizes = {}  # Track previous sizes at each price level and side
         self.csv_file = None
         self.csv_writer = None
 
@@ -61,8 +61,9 @@ class BookMonitor:
                 "price",
                 "size",
                 "size_change",
+                "side",
                 "token_id",
-                "event_slug"  # Add event slug to headers
+                "event_slug"
             ])
             self.csv_file.flush()
         print(f"CSV output initialized (append mode): {self.output_file}")
@@ -97,13 +98,32 @@ class BookMonitor:
                 best_bid = change.get("best_bid", "N/A")
                 best_ask = change.get("best_ask", "N/A")
 
-                # Check if the best bid or ask is at our target price
-                if best_bid == str(TARGET_PRICE) or best_ask == str(TARGET_PRICE):
+                # Check if this price level matches our target price
+                if abs(price - TARGET_PRICE) < 0.0001:
+                    # Determine if this is a bid or ask based on the price level
+                    # Bids are at or below best_bid, asks are at or above best_ask
+                    side = None
+                    try:
+                        best_bid_float = float(best_bid) if best_bid != "N/A" else None
+                        best_ask_float = float(best_ask) if best_ask != "N/A" else None
+                        
+                        if best_bid_float and price <= best_bid_float:
+                            side = "BID"
+                        elif best_ask_float and price >= best_ask_float:
+                            side = "ASK"
+                        else:
+                            # If we can't determine, default to BID for target price 0.999
+                            # (since it's typically a high bid price)
+                            side = "BID"
+                    except (ValueError, TypeError):
+                        side = "UNKNOWN"
+
                     # Calculate size change from previous
-                    previous_size = self.previous_bids.get(price, 0.0)
+                    cache_key = f"{price}_{side}"
+                    previous_size = self.previous_sizes.get(cache_key, 0.0)
                     size_change = size - previous_size
 
-                    # Only log if this is a new bid or increased size
+                    # Only log if this is a new entry or increased size
                     if size_change > 0:
                         # Get current timestamp with milliseconds
                         now = datetime.utcnow()
@@ -114,7 +134,7 @@ class BookMonitor:
                         timestamp_est = now.astimezone(est_timezone).isoformat()
 
                         # Log to console
-                        print(f"\n[{timestamp_iso}] New price change at {price}")
+                        print(f"\n[{timestamp_iso}] New {side} at {price}")
                         print(f"  Size: {size:.2f} (change: +{size_change:.2f})")
                         print(f"  Token: {self.token_id}")
                         print(f"  Event Slug: {event_slug}")
@@ -125,19 +145,18 @@ class BookMonitor:
                         if self.csv_writer:
                             self.csv_writer.writerow([
                                 timestamp_ms,
-                                timestamp_est,  # Save EST timestamp
+                                timestamp_est,
                                 price,
                                 size,
                                 size_change,
+                                side,
                                 self.token_id,
-                                event_slug,
-                                best_bid,
-                                best_ask
+                                event_slug
                             ])
                             self.csv_file.flush()
 
                     # Update previous size
-                    self.previous_bids[price] = size
+                    self.previous_sizes[cache_key] = size
 
             except (ValueError, KeyError) as e:
                 print(f"Error processing price change: {e}")

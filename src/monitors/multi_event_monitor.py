@@ -51,8 +51,8 @@ class MultiEventMonitor:
         self.market_active: dict[str, bool] = {}  # slug -> is_active
         self.slug_by_token: dict[str, str] = {}  # token_id -> slug
         
-        # Track bid data
-        self.previous_bids = {}  # Track previous bid sizes at each price level
+        # Track bid/ask data
+        self.previous_sizes = {}  # Track previous sizes at each price level and side
         
         # CSV file handles
         self.csv_file = None
@@ -75,6 +75,7 @@ class MultiEventMonitor:
                 "price",
                 "size",
                 "size_change",
+                "side",
                 "token_id",
                 "event_slug"
             ])
@@ -231,14 +232,32 @@ class MultiEventMonitor:
                 best_bid = change.get("best_bid", "N/A")
                 best_ask = change.get("best_ask", "N/A")
 
-                # Check if the best bid or ask is at our target price
-                if best_bid == str(TARGET_PRICE) or best_ask == str(TARGET_PRICE):
+                # Check if this price level matches our target price
+                if abs(price - TARGET_PRICE) < 0.0001:
+                    # Determine if this is a bid or ask based on the price level
+                    # Bids are at or below best_bid, asks are at or above best_ask
+                    side = None
+                    try:
+                        best_bid_float = float(best_bid) if best_bid != "N/A" else None
+                        best_ask_float = float(best_ask) if best_ask != "N/A" else None
+                        
+                        if best_bid_float and price <= best_bid_float:
+                            side = "BID"
+                        elif best_ask_float and price >= best_ask_float:
+                            side = "ASK"
+                        else:
+                            # If we can't determine, default to BID for target price 0.999
+                            # (since it's typically a high bid price)
+                            side = "BID"
+                    except (ValueError, TypeError):
+                        side = "UNKNOWN"
+
                     # Calculate size change from previous
-                    cache_key = f"{asset_id}_{price}"
-                    previous_size = self.previous_bids.get(cache_key, 0.0)
+                    cache_key = f"{asset_id}_{price}_{side}"
+                    previous_size = self.previous_sizes.get(cache_key, 0.0)
                     size_change = size - previous_size
 
-                    # Only log if this is a new bid or increased size
+                    # Only log if this is a new entry or increased size
                     if size_change > 0:
                         # Get current timestamp with milliseconds
                         now = datetime.utcnow()
@@ -250,8 +269,9 @@ class MultiEventMonitor:
 
                         # Log to console
                         logger.info(
-                            "[%s] New price change at %.3f for %s (slug: %s): size=%.2f, change=+%.2f",
+                            "[%s] New %s at %.3f for %s (slug: %s): size=%.2f, change=+%.2f",
                             timestamp_iso,
+                            side,
                             price,
                             asset_id,
                             slug,
@@ -267,13 +287,14 @@ class MultiEventMonitor:
                                 price,
                                 size,
                                 size_change,
+                                side,
                                 asset_id,
                                 slug
                             ])
                             self.csv_file.flush()
 
                     # Update previous size
-                    self.previous_bids[cache_key] = size
+                    self.previous_sizes[cache_key] = size
 
             except (ValueError, KeyError) as e:
                 logger.error("Error processing price change: %s", e)

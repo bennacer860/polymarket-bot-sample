@@ -91,9 +91,10 @@ monitor.run_sync()
 CSV format with columns:
 - `timestamp_ms` - Unix timestamp in milliseconds
 - `timestamp_iso` - ISO timestamp in EST timezone
-- `price` - Bid price level
+- `price` - Price level
 - `size` - Total size at price level
 - `size_change` - Change from previous update
+- `side` - Whether this is a BID or ASK order
 - `token_id` - Market token identifier
 - `event_slug` - Event slug for the market
 

@@ -150,9 +150,10 @@ The monitors output CSV files with the following columns:
 |--------|-------------|
 | `timestamp_ms` | Unix timestamp in milliseconds |
 | `timestamp_iso` | ISO timestamp in EST timezone |
-| `price` | Price level of the bid |
-| `size` | Size of the bid |
+| `price` | Price level of the order |
+| `size` | Size of the order |
 | `size_change` | Change in size from previous update |
+| `side` | Whether this is a BID or ASK order |
 | `token_id` | Token ID (market identifier) |
 | `event_slug` | Event slug for the market |
 

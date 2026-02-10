@@ -1,6 +1,6 @@
-# Book Monitor - 0.999 Price Bid Tracking
+# Book Monitor - 0.999 Price Bid/Ask Tracking
 
-This directory contains scripts to monitor Polymarket CLOB WebSocket for bids at the 0.999 price level.
+This directory contains scripts to monitor Polymarket CLOB WebSocket for bids and asks at the 0.999 price level.
 
 ## Quick Start
 
@@ -51,7 +51,7 @@ The REST version polls the orderbook every second (configurable) instead of usin
 The monitor will:
 - Connect to Polymarket CLOB (WebSocket or REST API)
 - Monitor orderbook updates for the token
-- Log every new bid at 0.999 price
+- Log every new bid OR ask at 0.999 price
 - Save data to `bids_0999.csv`
 
 Console output:
@@ -63,12 +63,12 @@ Target price: 0.999
 CSV output initialized: bids_0999.csv
 Subscribed to book updates for 0x123abc...
 
-[2026-02-09T01:23:45.678Z] New bid at 0.999
+[2026-02-09T01:23:45.678Z] New BID at 0.999
   Size: 150.00 (change: +150.00)
   Token: 0x123abc...
 
-[2026-02-09T01:24:12.345Z] New bid at 0.999
-  Size: 275.00 (change: +125.00)
+[2026-02-09T01:24:12.345Z] New ASK at 0.999
+  Size: 75.00 (change: +75.00)
   Token: 0x123abc...
 ```
 
@@ -92,16 +92,18 @@ This shows statistics without requiring visualization libraries:
 The CSV file contains:
 - `timestamp_ms`: Unix timestamp in milliseconds (for precise timing analysis)
 - `timestamp_iso`: Human-readable timestamp (e.g., 2026-02-09T01:23:45.678Z)
-- `price`: Bid price (0.999)
-- `size`: Total size of bids at this price level
+- `price`: Price level (0.999)
+- `size`: Total size of orders at this price level
 - `size_change`: Increase in size from previous update
+- `side`: Whether this is a BID or ASK order
 - `token_id`: Token being monitored
+- `event_slug`: Event slug identifier
 
 Example CSV:
 ```csv
-timestamp_ms,timestamp_iso,price,size,size_change,token_id
-1739060625678,2026-02-09T01:23:45.678Z,0.999,150.0,150.0,0x123abc...
-1739060652345,2026-02-09T01:24:12.345Z,0.999,275.0,125.0,0x123abc...
+timestamp_ms,timestamp_iso,price,size,size_change,side,token_id,event_slug
+1739060625678,2026-02-09T01:23:45.678Z,0.999,150.0,150.0,BID,0x123abc...,btc-15m-1707523200
+1739060652345,2026-02-09T01:24:12.345Z,0.999,75.0,75.0,ASK,0x123abc...,btc-15m-1707523200
 ```
 
 ## Visualization
@@ -196,10 +198,11 @@ If you get WebSocket connection errors:
 
 ### No Data
 
-If connected but no bids are logged:
+If connected but no data is logged:
 1. Verify the token_id is correct
 2. Check that there's active trading on this market
-3. Bids may not be placed at exactly 0.999 - check orderbook manually
+3. Orders may not be placed at exactly 0.999 - check orderbook manually
+4. Both BID and ASK orders at the target price will be tracked
 
 ### Message Format
 
