@@ -200,7 +200,15 @@ class MultiEventMonitor:
         Process a book update message.
 
         Args:
-            data: WebSocket message data
+            data: WebSocket message data with format:
+                {
+                  "event_type": "book",
+                  "asset_id": "...",
+                  "market": "...",
+                  "bids": [{"price": ".48", "size": "30"}, ...],
+                  "asks": [{"price": ".52", "size": "25"}, ...],
+                  "timestamp": "123456789000"
+                }
         """
         if not isinstance(data, dict):
             logger.debug("Unexpected message format: %s", data)
@@ -223,55 +231,42 @@ class MultiEventMonitor:
             logger.debug("Ignoring update for inactive market: %s", slug)
             return
 
-        # Extract price changes from the update
-        price_changes = data.get("price_changes", [])
+        # Extract basic info
         timestamp_ms = data.get("timestamp", int(datetime.utcnow().timestamp() * 1000))
-
-        # Process each price change
-        for change in price_changes:
+        
+        # Extract bids and asks arrays
+        bids = data.get("bids", [])
+        asks = data.get("asks", [])
+        
+        # Calculate best_bid and best_ask
+        best_bid = bids[0]["price"] if bids else "N/A"
+        best_ask = asks[0]["price"] if asks else "N/A"
+        
+        # Process bids at target price
+        for bid in bids:
             try:
-                price = float(change.get("price", 0))
-                size = float(change.get("size", 0))
-                best_bid = change.get("best_bid", "N/A")
-                best_ask = change.get("best_ask", "N/A")
-
-                # Check if the best bid or ask is at our target price
-                if best_bid == str(TARGET_PRICE) or best_ask == str(TARGET_PRICE):
-                    # Determine if this specific price level is a bid or ask
-                    # Bids are at or below best_bid, asks are at or above best_ask
-                    side = None
-                    try:
-                        best_bid_float = float(best_bid) if best_bid != "N/A" else None
-                        best_ask_float = float(best_ask) if best_ask != "N/A" else None
-                        
-                        if best_bid_float and price <= best_bid_float:
-                            side = "BID"
-                        elif best_ask_float and price >= best_ask_float:
-                            side = "ASK"
-                        else:
-                            # If we can't determine, check which target was hit
-                            if best_bid == str(TARGET_PRICE):
-                                side = "BID"
-                            else:
-                                side = "ASK"
-                    except (ValueError, TypeError):
-                        side = "UNKNOWN"
-
+                price = float(bid.get("price", 0))
+                size = float(bid.get("size", 0))
+                
+                # Check if this bid is at our target price
+                if abs(price - TARGET_PRICE) < 0.0001:
+                    side = "BID"
+                    
                     # Calculate size change from previous
                     cache_key = f"{asset_id}_{price}_{side}"
                     previous_size = self.previous_sizes.get(cache_key, 0.0)
                     size_change = size - previous_size
-
+                    
                     # Only log if this is a new entry or increased size
                     if size_change > 0:
                         # Get current timestamp with milliseconds
                         now = datetime.utcnow()
                         timestamp_iso = now.isoformat() + "Z"
-
+                        
                         # Convert timestamp to EST
                         est_timezone = pytz_timezone("US/Eastern")
                         timestamp_est = now.astimezone(est_timezone).isoformat()
-
+                        
                         # Log to console
                         logger.info(
                             "[%s] New %s at %.3f for %s (slug: %s): size=%.2f, change=+%.2f (best_bid=%s, best_ask=%s)",
@@ -285,7 +280,7 @@ class MultiEventMonitor:
                             best_bid,
                             best_ask,
                         )
-
+                        
                         # Write to CSV
                         if self.csv_writer:
                             self.csv_writer.writerow([
@@ -302,12 +297,75 @@ class MultiEventMonitor:
                                 slug
                             ])
                             self.csv_file.flush()
-
+                    
                     # Update previous size
                     self.previous_sizes[cache_key] = size
-
+                    
             except (ValueError, KeyError) as e:
-                logger.error("Error processing price change: %s", e)
+                logger.error("Error processing bid: %s", e)
+                continue
+        
+        # Process asks at target price
+        for ask in asks:
+            try:
+                price = float(ask.get("price", 0))
+                size = float(ask.get("size", 0))
+                
+                # Check if this ask is at our target price
+                if abs(price - TARGET_PRICE) < 0.0001:
+                    side = "ASK"
+                    
+                    # Calculate size change from previous
+                    cache_key = f"{asset_id}_{price}_{side}"
+                    previous_size = self.previous_sizes.get(cache_key, 0.0)
+                    size_change = size - previous_size
+                    
+                    # Only log if this is a new entry or increased size
+                    if size_change > 0:
+                        # Get current timestamp with milliseconds
+                        now = datetime.utcnow()
+                        timestamp_iso = now.isoformat() + "Z"
+                        
+                        # Convert timestamp to EST
+                        est_timezone = pytz_timezone("US/Eastern")
+                        timestamp_est = now.astimezone(est_timezone).isoformat()
+                        
+                        # Log to console
+                        logger.info(
+                            "[%s] New %s at %.3f for %s (slug: %s): size=%.2f, change=+%.2f (best_bid=%s, best_ask=%s)",
+                            timestamp_iso,
+                            side,
+                            price,
+                            asset_id,
+                            slug,
+                            size,
+                            size_change,
+                            best_bid,
+                            best_ask,
+                        )
+                        
+                        # Write to CSV
+                        if self.csv_writer:
+                            self.csv_writer.writerow([
+                                timestamp_ms,
+                                timestamp_iso,
+                                timestamp_est,
+                                price,
+                                size,
+                                size_change,
+                                side,
+                                best_bid,
+                                best_ask,
+                                asset_id,
+                                slug
+                            ])
+                            self.csv_file.flush()
+                    
+                    # Update previous size
+                    self.previous_sizes[cache_key] = size
+                    
+            except (ValueError, KeyError) as e:
+                logger.error("Error processing ask: %s", e)
                 continue
 
     async def subscribe_and_monitor(self):
