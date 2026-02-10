@@ -49,19 +49,22 @@ class BookMonitor:
 
     def setup_csv(self):
         """Setup CSV file with headers."""
-        self.csv_file = open(self.output_file, "w", newline="")
+        # Open the file in append mode ('a') instead of write mode ('w')
+        self.csv_file = open(self.output_file, "a", newline="")
         self.csv_writer = csv.writer(self.csv_file)
-        # Write headers
-        self.csv_writer.writerow([
-            "timestamp_ms",
-            "timestamp_iso",
-            "price",
-            "size",
-            "size_change",
-            "token_id"
-        ])
-        self.csv_file.flush()
-        print(f"CSV output initialized: {self.output_file}")
+
+        # Check if the file is empty to write headers
+        if self.csv_file.tell() == 0:
+            self.csv_writer.writerow([
+                "timestamp_ms",
+                "timestamp_iso",
+                "price",
+                "size",
+                "size_change",
+                "token_id"
+            ])
+            self.csv_file.flush()
+        print(f"CSV output initialized (append mode): {self.output_file}")
 
     def close_csv(self):
         """Close CSV file."""
@@ -165,7 +168,7 @@ class BookMonitor:
                         # Check if this is a book update
                         msg_type = data.get("event_type", data.get("type", ""))
 
-                        if msg_type in ["book", "book_update", "price_change"]:
+                        if msg_type in ["book"]:
                             self.process_book_update(data)
 
                     except json.JSONDecodeError:
