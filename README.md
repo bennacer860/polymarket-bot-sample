@@ -5,6 +5,8 @@ A Python bot for Polymarket with multiple modes:
 1. **Single Trade Mode** – Place a test limit order given an event slug, price, and direction
 2. **Trading Bot Mode** – For 15-min crypto Up/Down events: wait for event end, detect winning outcome, place 1 share @ 0.999 limit order on the winning side
 3. **Book Monitor Mode** – Monitor WebSocket orderbook updates and log bids placed at the 0.999 price level
+4. **Multi-Event Monitor Mode** – Monitor multiple event slugs simultaneously via WebSocket
+5. **Continuous 15-Min Monitor Mode** – Automatically track current 15-minute crypto markets
 
 ## Setup
 
@@ -129,6 +131,31 @@ python visualize_bids.py bids_0999.csv
 ```
 
 This will generate charts and statistics showing bid activity patterns over time. See `BOOK_MONITOR.md` for more details.
+
+### Multi-Event Monitoring
+
+Monitor multiple market events simultaneously with automatic market status tracking. See `MULTI_EVENT_MONITORING.md` for detailed documentation.
+
+**Monitor specific event slugs:**
+
+```bash
+python monitor_multi_events.py multi --slugs slug1 slug2 slug3
+```
+
+**Continuously monitor 15-minute crypto markets:**
+
+```bash
+python monitor_multi_events.py continuous-15min --markets BTC ETH SOL
+```
+
+Features:
+- Monitor multiple markets simultaneously via a single WebSocket connection
+- Automatic market status tracking - closes WebSocket when all markets end
+- Support for continuous 15-minute market monitoring
+- Automatically generates correct slugs for current 15-minute periods
+- All data saved to CSV for analysis
+
+See `MULTI_EVENT_MONITORING.md` for complete usage examples and documentation.
 
 ## Configuration
 
