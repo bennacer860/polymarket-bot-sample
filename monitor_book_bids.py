@@ -75,37 +75,42 @@ class BookMonitor:
         Args:
             data: WebSocket message data
         """
+        # Ensure the data is a dictionary
+        if not isinstance(data, dict):
+            print(f"Unexpected message format: {data}")
+            return
+
         # Extract bids from the update
         # The exact structure depends on Polymarket's WebSocket message format
         # Common formats include:
         # {"asset_id": "...", "bids": [{"price": "0.999", "size": "100"}, ...]}
-        
+
         bids = data.get("bids", [])
         timestamp_ms = data.get("timestamp", int(datetime.utcnow().timestamp() * 1000))
-        
+
         # Process each bid
         for bid in bids:
             try:
                 price = float(bid.get("price", 0))
                 size = float(bid.get("size", 0))
-                
+
                 # Check if this bid is at our target price
                 if abs(price - TARGET_PRICE) < 0.0001:  # Account for floating point
                     # Calculate size change from previous
                     previous_size = self.previous_bids.get(price, 0.0)
                     size_change = size - previous_size
-                    
+
                     # Only log if this is a new bid or increased size
                     if size_change > 0:
                         # Get current timestamp with milliseconds
                         now = datetime.utcnow()
                         timestamp_iso = now.isoformat() + "Z"
-                        
+
                         # Log to console
                         print(f"\n[{timestamp_iso}] New bid at {price}")
                         print(f"  Size: {size:.2f} (change: +{size_change:.2f})")
                         print(f"  Token: {self.token_id}")
-                        
+
                         # Write to CSV
                         if self.csv_writer:
                             self.csv_writer.writerow([
@@ -117,10 +122,10 @@ class BookMonitor:
                                 self.token_id
                             ])
                             self.csv_file.flush()
-                    
+
                     # Update previous size
                     self.previous_bids[price] = size
-                    
+
             except (ValueError, KeyError) as e:
                 print(f"Error processing bid: {e}")
                 continue
@@ -131,40 +136,43 @@ class BookMonitor:
         print(f"Monitoring token: {self.token_id}")
         print(f"Target price: {TARGET_PRICE}")
         print("-" * 60)
-        
+
         self.setup_csv()
-        
+
         try:
             async with websockets.connect(self.ws_url) as websocket:
                 # Subscribe to the book channel
-                # Message format may vary - adjust based on actual API
                 subscribe_msg = {
-                    "auth": {},
-                    "markets": [self.token_id],
+                    "type": "subscribe",
                     "assets_ids": [self.token_id],
-                    "type": "market"
+                    "custom_feature_enabled": False
                 }
-                
+                print(f"Subscription message: {json.dumps(subscribe_msg)}")
                 await websocket.send(json.dumps(subscribe_msg))
                 print(f"Subscribed to book updates for {self.token_id}")
-                
+
                 # Listen for updates
                 async for message in websocket:
                     try:
+                        print(f"Received message: {message}")  # Log the raw message
                         data = json.loads(message)
-                        
+
+                        # Check if the message is a list
+                        if isinstance(data, list):
+                            print("Received an empty list or unexpected list message. Skipping.")
+                            continue
+
                         # Check if this is a book update
-                        # The message type field may vary
                         msg_type = data.get("event_type", data.get("type", ""))
-                        
+
                         if msg_type in ["book", "book_update", "price_change"]:
                             self.process_book_update(data)
-                        
+
                     except json.JSONDecodeError:
                         print(f"Failed to decode message: {message}")
                     except Exception as e:
                         print(f"Error processing message: {e}")
-                        
+
         except websockets.exceptions.WebSocketException as e:
             print(f"WebSocket error: {e}")
         finally:

@@ -7,8 +7,9 @@ This makes it easier to get the token_id needed for monitor_book_bids.py
 import argparse
 import sys
 
-from src.gamma_client import fetch_event_by_slug
+from src.gamma_client import fetch_event_by_slug, get_market_token_ids
 from src.logging_config import setup_logging, get_logger
+from monitor_book_bids import BookMonitor
 
 logger = get_logger(__name__)
 
@@ -25,52 +26,63 @@ def main():
         required=True,
         help="Event slug from Polymarket URL"
     )
-    
+    parser.add_argument(
+        "--output",
+        default="bids_0999.csv",
+        help="Output CSV file for monitoring data (default: bids_0999.csv)"
+    )
+
     args = parser.parse_args()
-    
+
     # Fetch event details
     event = fetch_event_by_slug(args.slug)
     if not event:
         logger.error("Event not found. Check the slug and Polymarket URL.")
         return 1
-    
+
     # Display event info
     print(f"\nEvent: {event.get('title', 'Unknown')}")
     print(f"Slug: {args.slug}")
     print("-" * 60)
-    
+
     # Display markets and tokens
     markets = event.get("markets", [])
     if not markets:
         logger.error("No markets found for this event")
         return 1
-    
+
     print(f"\nFound {len(markets)} market(s):\n")
-    
+
     for i, market in enumerate(markets, 1):
         print(f"Market {i}:")
         print(f"  Question: {market.get('question', 'N/A')}")
         print(f"  Closed: {market.get('closed', False)}")
-        
-        # Get tokens
-        tokens = market.get("tokens", [])
+
+        # Get tokens using get_market_token_ids
+        tokens = get_market_token_ids(market)
         if tokens:
             print(f"  Tokens:")
             for token in tokens:
-                outcome = token.get("outcome", "Unknown")
-                token_id = token.get("token_id", "N/A")
-                print(f"    - {outcome}: {token_id}")
+                print(f"    - {token}")
         else:
             print(f"  No tokens found")
         print()
-    
-    # Give usage example
-    if markets and markets[0].get("tokens"):
-        token_id = markets[0]["tokens"][0].get("token_id")
-        print("\nExample usage:")
-        print(f"  python monitor_book_bids.py --token-id {token_id}")
-        print()
-    
+
+    # Start monitoring the first token ID of the first market
+    if markets:
+        tokens = get_market_token_ids(markets[0])
+        if tokens:
+            token_id = tokens[0]
+            print("\nStarting monitoring for the first token ID of the first market...")
+            monitor = BookMonitor(token_id, args.output)
+            monitor.run()
+        else:
+            logger.error("No valid token ID found to monitor.")
+            return 1
+    else:
+        logger.error("No markets found for this event.")
+        return 1
+
     return 0
 
 

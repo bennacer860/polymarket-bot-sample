@@ -27,6 +27,7 @@ def fetch_event_by_slug(slug: str) -> Optional[dict[str, Any]]:
         t0 = time.perf_counter()
         resp = requests.get(url, timeout=30)
         resp.raise_for_status()
+        logger.debug("Raw API response: %s", resp.text)
         data = resp.json()
         elapsed_ms = (time.perf_counter() - t0) * 1000
         markets = data.get("markets") or []
