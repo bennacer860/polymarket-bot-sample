@@ -105,10 +105,10 @@ class MultiEventMonitor:
         # Check if the file is empty to write headers
         if self.ticker_csv_file.tell() == 0:
             self.ticker_csv_writer.writerow([
+                "event_slug",
                 "timestamp_ms",
                 "timestamp_iso",
                 "timestamp_est",
-                "event_slug",
                 "event_type",
                 "asset_id",
                 "old_tick_size",
@@ -398,6 +398,9 @@ class MultiEventMonitor:
                         est_timezone = pytz_timezone("US/Eastern")
                         timestamp_est = now.astimezone(est_timezone).isoformat()
                         
+                        # Format slug to include the hour in 24-hour format
+                        slug = f"{slug}-{now.strftime('%H')}:00"
+                        
                         # Log to console
                         logger.info(
                             "[%s] New %s at %.3f for %s (slug: %s): size=%.2f, change=+%.2f (best_bid=%s, best_ask=%s)",
@@ -415,6 +418,7 @@ class MultiEventMonitor:
                         # Write to CSV
                         if self.csv_writer:
                             self.csv_writer.writerow([
+                                slug,  # Move formatted slug to the first column
                                 timestamp_ms,
                                 timestamp_iso,
                                 timestamp_est,
@@ -424,7 +428,6 @@ class MultiEventMonitor:
                                 side,
                                 best_bid,
                                 best_ask,
-                                event_slug,
                                 asset_id  # Move token_id to the last column
                             ])
                             self.csv_file.flush()
@@ -461,6 +464,9 @@ class MultiEventMonitor:
                         est_timezone = pytz_timezone("US/Eastern")
                         timestamp_est = now.astimezone(est_timezone).isoformat()
                         
+                        # Format slug to include the hour in 24-hour format
+                        slug = f"{slug}-{now.strftime('%H')}:00"
+                        
                         # Log to console
                         logger.info(
                             "[%s] New %s at %.3f for %s (slug: %s): size=%.2f, change=+%.2f (best_bid=%s, best_ask=%s)",
@@ -478,6 +484,7 @@ class MultiEventMonitor:
                         # Write to CSV
                         if self.csv_writer:
                             self.csv_writer.writerow([
+                                slug,  # Move formatted slug to the first column
                                 timestamp_ms,
                                 timestamp_iso,
                                 timestamp_est,
@@ -487,7 +494,6 @@ class MultiEventMonitor:
                                 side,
                                 best_bid,
                                 best_ask,
-                                event_slug,
                                 asset_id  # Move token_id to the last column
                             ])
                             self.csv_file.flush()
@@ -546,6 +552,9 @@ class MultiEventMonitor:
         # Get event type
         event_type = data.get("event_type", "tick_size_change")
         
+        # Format slug to include the hour in 24-hour format
+        slug = f"{slug}-{now.strftime('%H')}:00"
+        
         # Log to console
         logger.info(
             "[%s] Ticker change event for %s (slug: %s)",
@@ -557,12 +566,12 @@ class MultiEventMonitor:
         # Write to ticker change CSV
         if self.ticker_csv_writer:
             self.ticker_csv_writer.writerow([
+                slug,  # Move formatted slug to the first column
                 timestamp_ms,
                 timestamp_iso,
                 timestamp_est,
                 event_type,
                 asset_id,
-                slug,
                 data.get("old_tick_size"),
                 data.get("new_tick_size")
             ])
@@ -599,7 +608,7 @@ class MultiEventMonitor:
             async with websockets.connect(self.ws_url) as websocket:
                 self.websocket = websocket
                 self.running = True
-                
+
                 # Subscribe to the book channel for all tokens
                 subscribe_msg = {
                     "type": "subscribe",
@@ -618,7 +627,7 @@ class MultiEventMonitor:
                     async for message in websocket:
                         if not self.running:
                             break
-                        
+
                         try:
                             data = json.loads(message)
 
@@ -660,7 +669,7 @@ class MultiEventMonitor:
                             logger.error("Failed to decode message: %s", message)
                         except Exception as e:
                             logger.error("Error processing message: %s", e)
-                
+
                 except asyncio.CancelledError:
                     logger.info("Monitoring cancelled")
                 finally:
@@ -671,8 +680,15 @@ class MultiEventMonitor:
                     except asyncio.CancelledError:
                         pass
 
+        except websockets.exceptions.ConnectionClosedError as e:
+            logger.error("WebSocket connection closed unexpectedly: %s", e)
+            logger.info("Attempting to reconnect...")
+            await asyncio.sleep(5)  # Wait before reconnecting
+            await self.subscribe_and_monitor()  # Retry connection
+
         except websockets.exceptions.WebSocketException as e:
             logger.error("WebSocket error: %s", e)
+
         finally:
             self.running = False
             self.close_csv()
