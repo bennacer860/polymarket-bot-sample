@@ -233,10 +233,11 @@ class BookMonitor:
 
         try:
             async with websockets.connect(self.ws_url) as websocket:
-                # Subscribe to the book channel
+                # Subscribe to the book channel with event_type filter
                 subscribe_msg = {
                     "type": "subscribe",
                     "assets_ids": [self.token_id],
+                    "event_types": ["book"],  # Add event_type filter here
                     "custom_feature_enabled": False
                 }
                 print(f"Subscription message: {json.dumps(subscribe_msg)}")

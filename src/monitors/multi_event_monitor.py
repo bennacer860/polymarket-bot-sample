@@ -21,6 +21,12 @@ WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 # Target price level to monitor
 TARGET_PRICE = 0.999
 
+# Define the maximum depth of the order book to process
+MAX_ORDERBOOK_DEPTH = 5
+
+# Define the maximum depth of bids and asks to display
+MAX_DISPLAY_DEPTH = 5
+
 
 class MultiEventMonitor:
     """Monitor orderbook updates for multiple event slugs simultaneously."""
@@ -235,8 +241,8 @@ class MultiEventMonitor:
         timestamp_ms = data.get("timestamp", int(datetime.utcnow().timestamp() * 1000))
         
         # Extract bids and asks arrays
-        bids = data.get("bids", [])
-        asks = data.get("asks", [])
+        bids = data.get("bids", [])[:MAX_ORDERBOOK_DEPTH]  # Limit to top N bids
+        asks = data.get("asks", [])[:MAX_ORDERBOOK_DEPTH]  # Limit to top N asks
         
         # Calculate best_bid and best_ask
         best_bid = bids[0]["price"] if bids else "N/A"
@@ -367,6 +373,14 @@ class MultiEventMonitor:
             except (ValueError, KeyError) as e:
                 logger.error("Error processing ask: %s", e)
                 continue
+        
+        # Limit the depth of bids and asks for display
+        bids_display = sorted(data.get("bids", []), key=lambda x: float(x["price"]), reverse=True)[:MAX_DISPLAY_DEPTH]
+        asks_display = sorted(data.get("asks", []), key=lambda x: float(x["price"]))[:MAX_DISPLAY_DEPTH]
+
+        # Print the 5 highest bids and 5 lowest asks as strings in the desired format
+        print(f"Top 5 Bids: {[f'price: {bid['price']}, size: {bid['size']}' for bid in bids_display]}")
+        print(f"Top 5 Asks: {[f'price: {ask['price']}, size: {ask['size']}' for ask in asks_display]}")
 
     async def subscribe_and_monitor(self):
         """Connect to WebSocket and monitor book updates for all markets."""
@@ -430,7 +444,12 @@ class MultiEventMonitor:
                             msg_type = data.get("event_type", data.get("type", ""))
 
                             if msg_type in ["book"]:
+                                print(f"Detected Event Type: {msg_type} (Book Event)")
                                 self.process_book_update(data)
+
+                            # Handle tick_size_change event
+                            if msg_type == "tick_size_change":
+                                print(f"Tick Size Change Event Detected: {data}")  # Print the tick size change message
 
                         except json.JSONDecodeError:
                             logger.error("Failed to decode message: %s", message)
