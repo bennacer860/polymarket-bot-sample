@@ -432,11 +432,13 @@ class MultiEventMonitor:
             logger.debug("Unknown asset_id in ticker change: %s", asset_id)
             return
         
-        # Extract timestamp
-        timestamp_ms = data.get("timestamp", int(datetime.utcnow().timestamp() * 1000))
-        
-        # Get current timestamps
+        # Get current time for timestamp calculations
         now = datetime.utcnow()
+        
+        # Extract timestamp from data or use current time
+        timestamp_ms = data.get("timestamp", int(now.timestamp() * 1000))
+        
+        # Create ISO timestamp
         timestamp_iso = now.isoformat() + "Z"
         
         # Convert timestamp to EST
