@@ -33,11 +33,19 @@ python monitor_multi_events.py multi \
 
 ### 2. Continuous 15-Minute Market Monitoring
 
-Automatically monitor the current 15-minute markets for selected cryptocurrencies. The monitor will:
-- Automatically generate the correct market slug for the current 15-minute period
-- Monitor the markets until they end
-- Automatically transition to the next 15-minute period
+Automatically monitor 15-minute markets for selected cryptocurrencies with proactive subscription management. The monitor will:
+- **Proactively subscribe to NEXT 15-minute markets** before the current ones end
+- Monitor both current and upcoming markets simultaneously
+- Automatically check for new markets to subscribe to every 30 seconds
+- Automatically unsubscribe from markets that have ended
+- Maintain continuous monitoring without gaps
 - Continue indefinitely until stopped
+
+**Key Features:**
+- No gap in monitoring between market periods
+- Smooth transition from one market period to the next
+- Automatic cleanup of ended markets to reduce resource usage
+- Real-time subscription updates while running
 
 **Usage:**
 ```bash
@@ -56,12 +64,20 @@ python monitor_multi_events.py continuous-15min --markets BTC ETH SOL
 python monitor_multi_events.py continuous-15min --markets BTC ETH
 ```
 
+**How It Works:**
+1. On startup, subscribes to both CURRENT and NEXT 15-minute markets
+2. Every 30 seconds, checks if new upcoming markets need to be added
+3. Automatically subscribes to new markets before current ones end
+4. Removes markets that have ended (5-minute grace period after market end)
+5. Continues this cycle indefinitely
+
 ### 3. Market Status Tracking
 
 The monitors now track market status and automatically:
 - Check if markets are still active every 60 seconds (configurable)
 - Detect when markets have ended (via `ended` or `closed` flags)
-- Close WebSocket connections when all monitored markets have ended
+- Dynamically add new markets to the subscription
+- Dynamically remove ended markets from the subscription
 - Log market status changes
 
 ## Code Organization
@@ -84,6 +100,7 @@ src/
 
 Utilities for working with 15-minute crypto markets:
 - `get_current_15m_utc()`: Get current 15-minute timestamp block
+- `get_next_15m_utc()`: Get next 15-minute timestamp block (NEW)
 - `get_market_slug()`: Generate market slug for a given crypto and timestamp
 - `MARKET_IDS`: Mapping of crypto symbols to market ID prefixes
 
@@ -92,6 +109,19 @@ Utilities for working with 15-minute crypto markets:
 WebSocket monitor for multiple events:
 - Fetches token IDs for each event slug
 - Subscribes to all tokens via WebSocket
+- **`add_markets()`**: Dynamically add new markets while running (NEW)
+- **`remove_markets()`**: Dynamically remove ended markets while running (NEW)
+- Tracks market status and closes when all markets end
+- Processes and logs orderbook updates at target price (0.999)
+
+#### `src/monitors/continuous_15min_monitor.py`
+
+Continuous monitor for 15-minute markets:
+- Generates slugs for current AND next 15-minute periods
+- Uses `MultiEventMonitor` to monitor markets continuously
+- **`manage_subscriptions()`**: Periodically checks for new markets and removes old ones (NEW)
+- **Tracks monitored timestamps** per market to avoid duplicate subscriptions (NEW)
+- Automatically subscribes to upcoming markets before current ones end
 - Tracks market status and closes when all markets end
 - Processes and logs orderbook updates at target price (0.999)
 
@@ -178,7 +208,28 @@ The monitor checks market status by:
 1. Fetching the event from Gamma API
 2. Checking the first market's `ended` or `closed` flags
 3. Marking the market as inactive if either flag is true
-4. Closing the WebSocket when all monitored markets are inactive
+4. **NEW: Dynamically removing inactive markets from subscriptions**
+
+### Dynamic Subscription Management (NEW)
+
+The continuous 15-minute monitor now supports dynamic subscription management:
+
+**On Startup:**
+- Subscribes to BOTH current and next 15-minute markets immediately
+- Tracks which timestamp periods are being monitored
+
+**Every 30 seconds:**
+- Checks if the next 15-minute market needs to be added (proactive subscription)
+- Checks if current markets are not yet subscribed (catch-up mechanism)
+- Identifies ended markets (>5 minutes after market end time)
+- Adds new markets via WebSocket `subscribe` message
+- Removes ended markets via WebSocket `unsubscribe` message
+
+**Key Benefits:**
+- No gaps between market periods
+- Smooth transitions without reconnecting WebSocket
+- Automatic cleanup of resources
+- Reduced latency when markets change
 
 ### WebSocket Subscription
 
@@ -191,6 +242,17 @@ The monitor subscribes to multiple token IDs in a single WebSocket connection:
     "custom_feature_enabled": False
 }
 ```
+
+**NEW: Dynamic unsubscription** is also supported for removing ended markets:
+
+```python
+{
+    "type": "unsubscribe",
+    "assets_ids": [token_id_1, token_id_2, ...],
+}
+```
+
+This allows the monitor to add and remove markets dynamically without reconnecting.
 
 ## Troubleshooting
 
