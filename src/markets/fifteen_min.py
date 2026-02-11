@@ -30,6 +30,17 @@ def get_current_15m_utc() -> int:
     return (now // FIFTEEN_MIN) * FIFTEEN_MIN
 
 
+def get_next_15m_utc() -> int:
+    """
+    Get the next 15-minute UTC timestamp block.
+    
+    Returns:
+        Unix timestamp for the next 15-minute interval.
+    """
+    FIFTEEN_MIN = 15 * 60
+    return get_current_15m_utc() + FIFTEEN_MIN
+
+
 def get_market_slug(market_selection: MarketSelection, timestamp: int | None = None) -> str:
     """
     Get market slug for a 15-minute period.

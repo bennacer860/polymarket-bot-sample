@@ -187,6 +187,101 @@ class MultiEventMonitor:
         logger.info("Successfully initialized %d/%d markets", active_count, len(self.event_slugs))
         return True
 
+    async def add_markets(self, new_slugs: list[str]):
+        """
+        Dynamically add new markets to monitor.
+        
+        Args:
+            new_slugs: List of new event slugs to add
+        """
+        if not self.websocket or not self.running:
+            logger.warning("Cannot add markets: WebSocket not running")
+            return
+        
+        logger.info("Adding %d new markets to monitor", len(new_slugs))
+        
+        new_token_ids = []
+        for slug in new_slugs:
+            # Skip if already monitoring
+            if slug in self.token_ids:
+                logger.debug("Already monitoring %s, skipping", slug)
+                continue
+            
+            # Fetch token IDs for new slug
+            token_ids = await self.fetch_token_ids_for_slug(slug)
+            if token_ids:
+                self.token_ids[slug] = token_ids
+                self.market_active[slug] = True
+                self.event_slugs.append(slug)
+                
+                # Map token IDs to slugs
+                for token_id in token_ids:
+                    self.slug_by_token[token_id] = slug
+                
+                new_token_ids.extend(token_ids)
+                logger.info("Added market: %s with %d tokens", slug, len(token_ids))
+            else:
+                logger.warning("Failed to add market: %s", slug)
+        
+        # Subscribe to new token IDs
+        if new_token_ids:
+            try:
+                subscribe_msg = {
+                    "type": "subscribe",
+                    "assets_ids": new_token_ids,
+                    "custom_feature_enabled": False
+                }
+                await self.websocket.send(json.dumps(subscribe_msg))
+                logger.info("Subscribed to %d new token IDs", len(new_token_ids))
+            except Exception as e:
+                logger.error("Error subscribing to new markets: %s", e)
+    
+    async def remove_markets(self, slugs_to_remove: list[str]):
+        """
+        Dynamically remove markets from monitoring.
+        
+        Args:
+            slugs_to_remove: List of event slugs to remove
+        """
+        if not self.websocket or not self.running:
+            logger.warning("Cannot remove markets: WebSocket not running")
+            return
+        
+        logger.info("Removing %d markets from monitor", len(slugs_to_remove))
+        
+        token_ids_to_unsubscribe = []
+        for slug in slugs_to_remove:
+            if slug not in self.token_ids:
+                logger.debug("Market %s not in monitor, skipping", slug)
+                continue
+            
+            # Get token IDs to unsubscribe
+            token_ids = self.token_ids[slug]
+            token_ids_to_unsubscribe.extend(token_ids)
+            
+            # Remove from tracking
+            for token_id in token_ids:
+                self.slug_by_token.pop(token_id, None)
+            
+            self.token_ids.pop(slug, None)
+            self.market_active.pop(slug, None)
+            if slug in self.event_slugs:
+                self.event_slugs.remove(slug)
+            
+            logger.info("Removed market: %s", slug)
+        
+        # Unsubscribe from token IDs
+        if token_ids_to_unsubscribe:
+            try:
+                unsubscribe_msg = {
+                    "type": "unsubscribe",
+                    "assets_ids": token_ids_to_unsubscribe,
+                }
+                await self.websocket.send(json.dumps(unsubscribe_msg))
+                logger.info("Unsubscribed from %d token IDs", len(token_ids_to_unsubscribe))
+            except Exception as e:
+                logger.error("Error unsubscribing from markets: %s", e)
+
     async def check_market_status(self):
         """Periodically check if markets are still active and close websocket if all ended."""
         while self.running:

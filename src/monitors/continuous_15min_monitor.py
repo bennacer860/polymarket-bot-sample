@@ -2,23 +2,24 @@
 
 import asyncio
 from typing import Optional
+import time
 
 from .multi_event_monitor import MultiEventMonitor
-from ..markets.fifteen_min import get_market_slug, get_current_15m_utc, MarketSelection
+from ..markets.fifteen_min import get_market_slug, get_current_15m_utc, get_next_15m_utc, MarketSelection
 from ..logging_config import get_logger
 
 logger = get_logger(__name__)
 
 
 class ContinuousFifteenMinMonitor:
-    """Monitor that continuously tracks the current 15-minute market."""
+    """Monitor that continuously tracks current and upcoming 15-minute markets."""
 
     def __init__(
         self,
         market_selections: list[MarketSelection],
         output_file: str = "bids_0999.csv",
         ws_url: Optional[str] = None,
-        check_interval: int = 60,
+        check_interval: int = 30,
         ticker_change_file: str = "ticker_changes.csv",
     ):
         """
@@ -28,7 +29,7 @@ class ContinuousFifteenMinMonitor:
             market_selections: List of crypto assets to monitor (e.g., ["BTC", "ETH"])
             output_file: CSV file to save bid data
             ws_url: Optional WebSocket URL override
-            check_interval: How often to check if markets are still active (seconds)
+            check_interval: How often to check for new markets and remove ended ones (seconds)
             ticker_change_file: CSV file to save ticker change events
         """
         self.market_selections = market_selections
@@ -37,22 +38,93 @@ class ContinuousFifteenMinMonitor:
         self.check_interval = check_interval
         self.ticker_change_file = ticker_change_file
         self.running = False
-        self.current_monitor: Optional[MultiEventMonitor] = None
+        self.monitor: Optional[MultiEventMonitor] = None
+        
+        # Track which timestamp periods we're monitoring for each market
+        self.monitored_timestamps: dict[MarketSelection, set[int]] = {
+            selection: set() for selection in market_selections
+        }
 
-    def get_current_slugs(self) -> list[str]:
-        """Get slugs for the current 15-minute period for all selected markets."""
-        timestamp = get_current_15m_utc()
+    def get_slugs_for_timestamp(self, timestamp: int) -> list[str]:
+        """Get slugs for a specific 15-minute period for all selected markets."""
         slugs = []
         
         for selection in self.market_selections:
             try:
                 slug = get_market_slug(selection, timestamp)
                 slugs.append(slug)
-                logger.debug("Current slug for %s: %s", selection, slug)
+                logger.debug("Generated slug for %s at %d: %s", selection, timestamp, slug)
             except ValueError as e:
-                logger.error("Failed to get slug for %s: %s", selection, e)
+                logger.error("Failed to get slug for %s at %d: %s", selection, timestamp, e)
         
         return slugs
+
+    async def manage_subscriptions(self):
+        """Periodically check for new markets to subscribe to and old ones to unsubscribe from."""
+        while self.running:
+            await asyncio.sleep(self.check_interval)
+            
+            if not self.monitor or not self.monitor.running:
+                continue
+            
+            logger.debug("Checking for new markets to subscribe and old ones to unsubscribe...")
+            
+            current_timestamp = get_current_15m_utc()
+            next_timestamp = get_next_15m_utc()
+            current_time = int(time.time())
+            
+            # Collect slugs to add and remove
+            slugs_to_add = []
+            slugs_to_remove = []
+            
+            for selection in self.market_selections:
+                # Check if we need to add the next market (proactive subscription)
+                if next_timestamp not in self.monitored_timestamps[selection]:
+                    try:
+                        slug = get_market_slug(selection, next_timestamp)
+                        slugs_to_add.append(slug)
+                        self.monitored_timestamps[selection].add(next_timestamp)
+                        logger.info("Will add next market for %s: %s", selection, slug)
+                    except ValueError as e:
+                        logger.error("Failed to generate next slug for %s: %s", selection, e)
+                
+                # Check if we need to add the current market (if not already added)
+                if current_timestamp not in self.monitored_timestamps[selection]:
+                    try:
+                        slug = get_market_slug(selection, current_timestamp)
+                        slugs_to_add.append(slug)
+                        self.monitored_timestamps[selection].add(current_timestamp)
+                        logger.info("Will add current market for %s: %s", selection, slug)
+                    except ValueError as e:
+                        logger.error("Failed to generate current slug for %s: %s", selection, e)
+                
+                # Check for old markets that have ended and should be removed
+                timestamps_to_remove = []
+                for timestamp in self.monitored_timestamps[selection]:
+                    # Markets that ended more than 5 minutes ago should be removed
+                    market_end_time = timestamp + (15 * 60)  # Market ends 15 minutes after start
+                    if current_time > market_end_time + (5 * 60):  # 5 minute grace period
+                        try:
+                            slug = get_market_slug(selection, timestamp)
+                            # Check if this market is actually inactive
+                            if slug in self.monitor.market_active and not self.monitor.market_active[slug]:
+                                slugs_to_remove.append(slug)
+                                timestamps_to_remove.append(timestamp)
+                                logger.info("Will remove ended market for %s: %s", selection, slug)
+                        except ValueError as e:
+                            logger.error("Failed to generate slug for removal %s: %s", selection, e)
+                
+                # Remove timestamps from our tracking
+                for timestamp in timestamps_to_remove:
+                    self.monitored_timestamps[selection].discard(timestamp)
+            
+            # Add new markets
+            if slugs_to_add:
+                await self.monitor.add_markets(slugs_to_add)
+            
+            # Remove old markets
+            if slugs_to_remove:
+                await self.monitor.remove_markets(slugs_to_remove)
 
     async def run(self):
         """Run the continuous monitor."""
@@ -63,33 +135,54 @@ class ContinuousFifteenMinMonitor:
         
         self.running = True
         
-        while self.running:
-            # Get slugs for the current 15-minute period
-            current_slugs = self.get_current_slugs()
-            
-            if not current_slugs:
-                logger.error("No valid slugs generated. Waiting 60 seconds before retry.")
-                await asyncio.sleep(60)
-                continue
-            
-            logger.info("Monitoring current 15-minute markets: %s", ", ".join(current_slugs))
-            
-            # Create and run monitor for these slugs
-            self.current_monitor = MultiEventMonitor(
-                event_slugs=current_slugs,
-                output_file=self.output_file,
-                ws_url=self.ws_url,
-                check_interval=self.check_interval,
-                ticker_change_file=self.ticker_change_file,
-            )
-            
-            # Run the monitor (it will exit when all markets end)
-            await self.current_monitor.run()
-            
-            logger.info("Current 15-minute period ended. Transitioning to next period.")
-            
-            # Small delay before starting next period
-            await asyncio.sleep(5)
+        # Get slugs for current AND next periods
+        current_timestamp = get_current_15m_utc()
+        next_timestamp = get_next_15m_utc()
+        
+        initial_slugs = []
+        
+        # Add current period markets
+        current_slugs = self.get_slugs_for_timestamp(current_timestamp)
+        for selection in self.market_selections:
+            self.monitored_timestamps[selection].add(current_timestamp)
+        initial_slugs.extend(current_slugs)
+        
+        # Add next period markets (proactive subscription)
+        next_slugs = self.get_slugs_for_timestamp(next_timestamp)
+        for selection in self.market_selections:
+            self.monitored_timestamps[selection].add(next_timestamp)
+        initial_slugs.extend(next_slugs)
+        
+        if not initial_slugs:
+            logger.error("No valid slugs generated. Cannot start monitoring.")
+            return
+        
+        logger.info("Initial monitoring setup for current and next 15-minute markets: %s", ", ".join(initial_slugs))
+        
+        # Create monitor that will run continuously
+        self.monitor = MultiEventMonitor(
+            event_slugs=initial_slugs,
+            output_file=self.output_file,
+            ws_url=self.ws_url,
+            check_interval=60,  # Check market status every 60 seconds
+            ticker_change_file=self.ticker_change_file,
+        )
+        
+        # Start subscription management task
+        subscription_task = asyncio.create_task(self.manage_subscriptions())
+        
+        try:
+            # Run the monitor (it will keep running until manually stopped)
+            await self.monitor.run()
+        except KeyboardInterrupt:
+            logger.info("Continuous monitor stopped by user")
+        finally:
+            self.running = False
+            subscription_task.cancel()
+            try:
+                await subscription_task
+            except asyncio.CancelledError:
+                pass
         
         logger.info("Continuous monitor stopped")
 
