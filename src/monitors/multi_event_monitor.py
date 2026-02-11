@@ -226,6 +226,7 @@ class MultiEventMonitor:
         # Subscribe to new token IDs
         if new_token_ids:
             try:
+                # Note: 'assets_ids' field name is from Polymarket WebSocket API
                 subscribe_msg = {
                     "type": "subscribe",
                     "assets_ids": new_token_ids,
@@ -273,6 +274,7 @@ class MultiEventMonitor:
         # Unsubscribe from token IDs
         if token_ids_to_unsubscribe:
             try:
+                # Note: 'assets_ids' field name is from Polymarket WebSocket API
                 unsubscribe_msg = {
                     "type": "unsubscribe",
                     "assets_ids": token_ids_to_unsubscribe,

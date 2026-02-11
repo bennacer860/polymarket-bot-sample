@@ -5,10 +5,13 @@ from typing import Optional
 import time
 
 from .multi_event_monitor import MultiEventMonitor
-from ..markets.fifteen_min import get_market_slug, get_current_15m_utc, get_next_15m_utc, MarketSelection
+from ..markets.fifteen_min import get_market_slug, get_current_15m_utc, get_next_15m_utc, MarketSelection, FIFTEEN_MIN_SECONDS
 from ..logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# Time constants for market management
+GRACE_PERIOD_SECONDS = 5 * 60  # 5 minutes after market end before removal
 
 
 class ContinuousFifteenMinMonitor:
@@ -101,9 +104,9 @@ class ContinuousFifteenMinMonitor:
                 # Check for old markets that have ended and should be removed
                 timestamps_to_remove = []
                 for timestamp in self.monitored_timestamps[selection]:
-                    # Markets that ended more than 5 minutes ago should be removed
-                    market_end_time = timestamp + (15 * 60)  # Market ends 15 minutes after start
-                    if current_time > market_end_time + (5 * 60):  # 5 minute grace period
+                    # Markets that ended more than grace period ago should be removed
+                    market_end_time = timestamp + FIFTEEN_MIN_SECONDS
+                    if current_time > market_end_time + GRACE_PERIOD_SECONDS:
                         try:
                             slug = get_market_slug(selection, timestamp)
                             # Check if this market is actually inactive

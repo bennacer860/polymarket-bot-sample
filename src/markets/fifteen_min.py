@@ -17,6 +17,9 @@ MARKET_IDS = {
 
 MarketSelection = Literal["BTC", "ETH", "SOL", "XRP"]
 
+# Time constants
+FIFTEEN_MIN_SECONDS = 15 * 60
+
 
 def get_current_15m_utc() -> int:
     """
@@ -26,8 +29,7 @@ def get_current_15m_utc() -> int:
         Unix timestamp rounded down to the nearest 15-minute interval.
     """
     now = int(time.time())
-    FIFTEEN_MIN = 15 * 60
-    return (now // FIFTEEN_MIN) * FIFTEEN_MIN
+    return (now // FIFTEEN_MIN_SECONDS) * FIFTEEN_MIN_SECONDS
 
 
 def get_next_15m_utc() -> int:
@@ -37,8 +39,7 @@ def get_next_15m_utc() -> int:
     Returns:
         Unix timestamp for the next 15-minute interval.
     """
-    FIFTEEN_MIN = 15 * 60
-    return get_current_15m_utc() + FIFTEEN_MIN
+    return get_current_15m_utc() + FIFTEEN_MIN_SECONDS
 
 
 def get_market_slug(market_selection: MarketSelection, timestamp: int | None = None) -> str:
