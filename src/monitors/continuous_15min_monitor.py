@@ -19,6 +19,7 @@ class ContinuousFifteenMinMonitor:
         output_file: str = "bids_0999.csv",
         ws_url: Optional[str] = None,
         check_interval: int = 60,
+        ticker_change_file: str = "ticker_changes.csv",
     ):
         """
         Initialize the continuous 15-minute monitor.
@@ -28,11 +29,13 @@ class ContinuousFifteenMinMonitor:
             output_file: CSV file to save bid data
             ws_url: Optional WebSocket URL override
             check_interval: How often to check if markets are still active (seconds)
+            ticker_change_file: CSV file to save ticker change events
         """
         self.market_selections = market_selections
         self.output_file = output_file
         self.ws_url = ws_url
         self.check_interval = check_interval
+        self.ticker_change_file = ticker_change_file
         self.running = False
         self.current_monitor: Optional[MultiEventMonitor] = None
 
@@ -77,6 +80,7 @@ class ContinuousFifteenMinMonitor:
                 output_file=self.output_file,
                 ws_url=self.ws_url,
                 check_interval=self.check_interval,
+                ticker_change_file=self.ticker_change_file,
             )
             
             # Run the monitor (it will exit when all markets end)
