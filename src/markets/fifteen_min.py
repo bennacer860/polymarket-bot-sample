@@ -9,10 +9,10 @@ logger = get_logger(__name__)
 
 # Market ID prefixes for different crypto assets
 MARKET_IDS = {
-    "BTC": "btc-15m",
-    "ETH": "eth-15m",
-    "SOL": "sol-15m",
-    "XRP": "xrp-15m",
+    "BTC": "btc-updown-15m",
+    "ETH": "eth-updown-15m",
+    "SOL": "sol-updown-15m",
+    "XRP": "xrp-updown-15m",
 }
 
 MarketSelection = Literal["BTC", "ETH", "SOL", "XRP"]
@@ -40,7 +40,7 @@ def get_market_slug(market_selection: MarketSelection, timestamp: int | None = N
         
     Returns:
         Market slug in format: "{market_base}-{timestamp}"
-        Example: "btc-15m-1707523200"
+        Example: "btc-updown-15m-1707523200"
     """
     market_base = MARKET_IDS.get(market_selection)
     if not market_base:

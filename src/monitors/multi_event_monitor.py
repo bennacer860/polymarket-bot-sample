@@ -37,6 +37,7 @@ class MultiEventMonitor:
         output_file: str = "bids_0999.csv",
         ws_url: Optional[str] = None,
         check_interval: int = 60,
+        ticker_change_file: str = "ticker_changes.csv",
     ):
         """
         Initialize the multi-event monitor.
@@ -46,11 +47,13 @@ class MultiEventMonitor:
             output_file: CSV file to save bid data
             ws_url: Optional WebSocket URL override
             check_interval: How often to check if markets are still active (seconds)
+            ticker_change_file: CSV file to save ticker change events
         """
         self.event_slugs = event_slugs
         self.output_file = output_file
         self.ws_url = ws_url or WS_URL
         self.check_interval = check_interval
+        self.ticker_change_file = ticker_change_file
         
         # Track token IDs and market status
         self.token_ids: dict[str, list[str]] = {}  # slug -> [token_ids]
@@ -63,6 +66,10 @@ class MultiEventMonitor:
         # CSV file handles
         self.csv_file = None
         self.csv_writer = None
+        
+        # Ticker change CSV file handles
+        self.ticker_csv_file = None
+        self.ticker_csv_writer = None
         
         # WebSocket connection
         self.websocket = None
@@ -90,11 +97,31 @@ class MultiEventMonitor:
             ])
             self.csv_file.flush()
         logger.info("CSV output initialized (append mode): %s", self.output_file)
+        
+        # Setup ticker change CSV
+        self.ticker_csv_file = open(self.ticker_change_file, "a", newline="")
+        self.ticker_csv_writer = csv.writer(self.ticker_csv_file)
+        
+        # Check if the file is empty to write headers
+        if self.ticker_csv_file.tell() == 0:
+            self.ticker_csv_writer.writerow([
+                "timestamp_ms",
+                "timestamp_iso",
+                "timestamp_est",
+                "event_type",
+                "asset_id",
+                "event_slug",
+                "raw_data"
+            ])
+            self.ticker_csv_file.flush()
+        logger.info("Ticker change CSV initialized (append mode): %s", self.ticker_change_file)
 
     def close_csv(self):
-        """Close CSV file."""
+        """Close CSV files."""
         if self.csv_file:
             self.csv_file.close()
+        if self.ticker_csv_file:
+            self.ticker_csv_file.close()
 
     async def fetch_token_ids_for_slug(self, slug: str) -> list[str]:
         """
@@ -382,6 +409,67 @@ class MultiEventMonitor:
         print(f"Top 5 Bids: {[f'price: {bid['price']}, size: {bid['size']}' for bid in bids_display]}")
         print(f"Top 5 Asks: {[f'price: {ask['price']}, size: {ask['size']}' for ask in asks_display]}")
 
+    def process_ticker_change(self, data: dict[str, Any]):
+        """
+        Process a tick_size_change event.
+        
+        Args:
+            data: WebSocket message data for tick_size_change event
+        """
+        if not isinstance(data, dict):
+            logger.debug("Unexpected ticker change message format: %s", data)
+            return
+        
+        # Extract asset ID to determine which market this is for
+        asset_id = data.get("asset_id")
+        if not asset_id:
+            logger.debug("No asset_id in ticker change message")
+            return
+        
+        # Look up the slug for this token
+        slug = self.slug_by_token.get(asset_id)
+        if not slug:
+            logger.debug("Unknown asset_id in ticker change: %s", asset_id)
+            return
+        
+        # Get current time for timestamp calculations
+        now = datetime.utcnow()
+        
+        # Extract timestamp from data or use current time
+        timestamp_ms = data.get("timestamp", int(now.timestamp() * 1000))
+        
+        # Create ISO timestamp
+        timestamp_iso = now.isoformat() + "Z"
+        
+        # Convert timestamp to EST
+        est_timezone = pytz_timezone("US/Eastern")
+        timestamp_est = now.astimezone(est_timezone).isoformat()
+        
+        # Get event type
+        event_type = data.get("event_type", "tick_size_change")
+        
+        # Log to console
+        logger.info(
+            "[%s] Ticker change event for %s (slug: %s)",
+            timestamp_iso,
+            asset_id,
+            slug,
+        )
+        
+        # Write to ticker change CSV
+        if self.ticker_csv_writer:
+            self.ticker_csv_writer.writerow([
+                timestamp_ms,
+                timestamp_iso,
+                timestamp_est,
+                event_type,
+                asset_id,
+                slug,
+                json.dumps(data)  # Save full raw data for analysis
+            ])
+            self.ticker_csv_file.flush()
+            logger.debug("Ticker change event saved to %s", self.ticker_change_file)
+
     async def subscribe_and_monitor(self):
         """Connect to WebSocket and monitor book updates for all markets."""
         logger.info("Connecting to %s", self.ws_url)
@@ -450,6 +538,7 @@ class MultiEventMonitor:
                             # Handle tick_size_change event
                             if msg_type == "tick_size_change":
                                 print(f"Tick Size Change Event Detected: {data}")  # Print the tick size change message
+                                self.process_ticker_change(data)
 
                         except json.JSONDecodeError:
                             logger.error("Failed to decode message: %s", message)

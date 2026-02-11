@@ -10,7 +10,7 @@ from src.monitors.continuous_15min_monitor import ContinuousFifteenMinMonitor
 from src.markets.fifteen_min import MARKET_IDS
 
 
-def cmd_multi_event(slugs: list[str], output: str, ws_url: str | None) -> int:
+def cmd_multi_event(slugs: list[str], output: str, ws_url: str | None, ticker_output: str) -> int:
     """Monitor multiple event slugs simultaneously."""
     setup_logging()
     
@@ -18,13 +18,14 @@ def cmd_multi_event(slugs: list[str], output: str, ws_url: str | None) -> int:
         event_slugs=slugs,
         output_file=output,
         ws_url=ws_url,
+        ticker_change_file=ticker_output,
     )
     
     monitor.run_sync()
     return 0
 
 
-def cmd_continuous_15min(markets: list[str], output: str, ws_url: str | None) -> int:
+def cmd_continuous_15min(markets: list[str], output: str, ws_url: str | None, ticker_output: str) -> int:
     """Continuously monitor 15-minute crypto markets."""
     setup_logging()
     
@@ -39,6 +40,7 @@ def cmd_continuous_15min(markets: list[str], output: str, ws_url: str | None) ->
         market_selections=markets,
         output_file=output,
         ws_url=ws_url,
+        ticker_change_file=ticker_output,
     )
     
     monitor.run_sync()
@@ -69,6 +71,11 @@ def main() -> int:
         help="Output CSV file (default: bids_0999.csv)"
     )
     multi_parser.add_argument(
+        "--ticker-output",
+        default="ticker_changes.csv",
+        help="Ticker change events CSV file (default: ticker_changes.csv)"
+    )
+    multi_parser.add_argument(
         "--ws-url",
         help="WebSocket URL (default: wss://ws-subscriptions-clob.polymarket.com/ws/market)"
     )
@@ -91,6 +98,11 @@ def main() -> int:
         help="Output CSV file (default: bids_0999.csv)"
     )
     continuous_parser.add_argument(
+        "--ticker-output",
+        default="ticker_changes.csv",
+        help="Ticker change events CSV file (default: ticker_changes.csv)"
+    )
+    continuous_parser.add_argument(
         "--ws-url",
         help="WebSocket URL (default: wss://ws-subscriptions-clob.polymarket.com/ws/market)"
     )
@@ -98,9 +110,9 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "multi":
-        return cmd_multi_event(args.slugs, args.output, args.ws_url)
+        return cmd_multi_event(args.slugs, args.output, args.ws_url, args.ticker_output)
     if args.command == "continuous-15min":
-        return cmd_continuous_15min(args.markets, args.output, args.ws_url)
+        return cmd_continuous_15min(args.markets, args.output, args.ws_url, args.ticker_output)
 
     return 1
 
