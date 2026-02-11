@@ -670,8 +670,8 @@ class MultiEventMonitor:
             slug=slug,
             event_type="tick_size_change",
             asset_id=asset_id,
-            old_tick_size=str(data.get("old_tick_size", "")),
-            new_tick_size=str(data.get("new_tick_size", ""))
+            old_tick_size=data.get("old_tick_size", ""),
+            new_tick_size=data.get("new_tick_size", "")
         )
 
     async def subscribe_and_monitor(self):
@@ -763,24 +763,32 @@ class MultiEventMonitor:
 
                         except json.JSONDecodeError:
                             logger.error("Failed to decode message: %s", message)
-                            # Log error for all active markets
-                            for slug in self.event_slugs:
-                                if self.market_active.get(slug, False):
-                                    self.log_market_event(
-                                        slug=slug,
-                                        event_type="error",
-                                        error_message=f"Failed to decode WebSocket message: {message[:100]}"
-                                    )
+                            # Log a single decode error (not market-specific)
+                            self.log_market_event(
+                                slug="N/A",
+                                event_type="error",
+                                error_message=f"Failed to decode WebSocket message: {message[:100]}"
+                            )
                         except Exception as e:
                             logger.error("Error processing message: %s", e)
-                            # Log error for all active markets
-                            for slug in self.event_slugs:
-                                if self.market_active.get(slug, False):
-                                    self.log_market_event(
-                                        slug=slug,
-                                        event_type="error",
-                                        error_message=f"Error processing message: {str(e)}"
-                                    )
+                            # Determine if error is for a specific market
+                            try:
+                                data = json.loads(message) if isinstance(message, str) else message
+                                asset_id = data.get("asset_id", "")
+                                slug = self.slug_by_token.get(asset_id, "N/A")
+                                self.log_market_event(
+                                    slug=slug,
+                                    event_type="error",
+                                    asset_id=asset_id,
+                                    error_message=f"Error processing message: {str(e)}"
+                                )
+                            except:
+                                # If we can't determine the market, log once without market
+                                self.log_market_event(
+                                    slug="N/A",
+                                    event_type="error",
+                                    error_message=f"Error processing message: {str(e)}"
+                                )
 
                 except asyncio.CancelledError:
                     logger.info("Monitoring cancelled")
