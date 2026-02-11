@@ -101,17 +101,18 @@ class MultiEventMonitor:
         # Setup ticker change CSV
         self.ticker_csv_file = open(self.ticker_change_file, "a", newline="")
         self.ticker_csv_writer = csv.writer(self.ticker_csv_file)
-        
+
         # Check if the file is empty to write headers
         if self.ticker_csv_file.tell() == 0:
             self.ticker_csv_writer.writerow([
                 "timestamp_ms",
                 "timestamp_iso",
                 "timestamp_est",
+                "event_slug",
                 "event_type",
                 "asset_id",
-                "event_slug",
-                "raw_data"
+                "old_tick_size",
+                "new_tick_size"
             ])
             self.ticker_csv_file.flush()
         logger.info("Ticker change CSV initialized (append mode): %s", self.ticker_change_file)
@@ -423,8 +424,8 @@ class MultiEventMonitor:
                                 side,
                                 best_bid,
                                 best_ask,
-                                asset_id,
-                                slug
+                                event_slug,
+                                asset_id  # Move token_id to the last column
                             ])
                             self.csv_file.flush()
                     
@@ -486,8 +487,8 @@ class MultiEventMonitor:
                                 side,
                                 best_bid,
                                 best_ask,
-                                asset_id,
-                                slug
+                                event_slug,
+                                asset_id  # Move token_id to the last column
                             ])
                             self.csv_file.flush()
                     
@@ -562,7 +563,8 @@ class MultiEventMonitor:
                 event_type,
                 asset_id,
                 slug,
-                json.dumps(data)  # Save full raw data for analysis
+                data.get("old_tick_size"),
+                data.get("new_tick_size")
             ])
             self.ticker_csv_file.flush()
             logger.debug("Ticker change event saved to %s", self.ticker_change_file)
@@ -629,7 +631,24 @@ class MultiEventMonitor:
                             msg_type = data.get("event_type", data.get("type", ""))
 
                             if msg_type in ["book"]:
-                                print(f"Detected Event Type: {msg_type} (Book Event)")
+                                # Extract asset ID to determine which market this is for
+                                asset_id = data.get("asset_id")
+                                if not asset_id:
+                                    logger.debug("No asset_id in message")
+                                    continue
+                                
+                                # Look up the slug for this token
+                                slug = self.slug_by_token.get(asset_id)
+                                if not slug:
+                                    logger.debug("Unknown asset_id: %s", asset_id)
+                                    continue
+                                
+                                # Check if this market is still active
+                                if not self.market_active.get(slug, False):
+                                    logger.debug("Ignoring update for inactive market: %s", slug)
+                                    continue
+
+                                print(f"Detected Event Type: {msg_type} (Book Event) for market slug: {slug}")
                                 self.process_book_update(data)
 
                             # Handle tick_size_change event
