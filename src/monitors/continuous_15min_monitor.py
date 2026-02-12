@@ -11,7 +11,16 @@ from ..logging_config import get_logger
 logger = get_logger(__name__)
 
 # Time constants for market management
-GRACE_PERIOD_SECONDS = 5 * 60  # 5 minutes after market end before removal
+# Grace period after market end before removal (seconds)
+GRACE_PERIOD_SECONDS = 5 * 60
+
+# Default check interval for continuous monitor (seconds)
+# How often to check for new markets and remove ended ones
+DEFAULT_CONTINUOUS_CHECK_INTERVAL = 30
+
+# Default market status check interval for MultiEventMonitor (seconds)
+# How often to check if markets are still active
+DEFAULT_MARKET_STATUS_CHECK_INTERVAL = 60
 
 
 class ContinuousFifteenMinMonitor:
@@ -22,7 +31,7 @@ class ContinuousFifteenMinMonitor:
         market_selections: list[MarketSelection],
         output_file: str = "bids_0999.csv",
         ws_url: Optional[str] = None,
-        check_interval: int = 30,
+        check_interval: int = DEFAULT_CONTINUOUS_CHECK_INTERVAL,
         market_events_file: str = "market_events.csv",
     ):
         """
@@ -167,7 +176,7 @@ class ContinuousFifteenMinMonitor:
             event_slugs=initial_slugs,
             output_file=self.output_file,
             ws_url=self.ws_url,
-            check_interval=60,  # Check market status every 60 seconds
+            check_interval=DEFAULT_MARKET_STATUS_CHECK_INTERVAL,
             market_events_file=self.market_events_file,
         )
         

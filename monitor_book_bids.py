@@ -28,6 +28,13 @@ WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 # Target price level to monitor
 TARGET_PRICE = 0.999
 
+# Price comparison tolerance for floating point comparison
+# Used when checking if a price matches TARGET_PRICE
+PRICE_TOLERANCE = 0.0001
+
+# Separator line length for console output
+SEPARATOR_LENGTH = 60
+
 
 class BookMonitor:
     """Monitor orderbook updates for a specific price level."""
@@ -115,7 +122,7 @@ class BookMonitor:
                 size = float(bid.get("size", 0))
                 
                 # Check if this bid is at our target price
-                if abs(price - TARGET_PRICE) < 0.0001:
+                if abs(price - TARGET_PRICE) < PRICE_TOLERANCE:
                     side = "BID"
                     
                     # Calculate size change from previous
@@ -172,7 +179,7 @@ class BookMonitor:
                 size = float(ask.get("size", 0))
                 
                 # Check if this ask is at our target price
-                if abs(price - TARGET_PRICE) < 0.0001:
+                if abs(price - TARGET_PRICE) < PRICE_TOLERANCE:
                     side = "ASK"
                     
                     # Calculate size change from previous
@@ -227,7 +234,7 @@ class BookMonitor:
         print(f"Connecting to {self.ws_url}")
         print(f"Monitoring token: {self.token_id}")
         print(f"Target price: {TARGET_PRICE}")
-        print("-" * 60)
+        print("-" * SEPARATOR_LENGTH)
 
         self.setup_csv()
 
