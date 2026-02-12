@@ -469,8 +469,8 @@ class MultiEventMonitor:
                         est_timezone = pytz_timezone("US/Eastern")
                         timestamp_est = now.astimezone(est_timezone).isoformat()
                         
-                        # Format slug to include the hour in 24-hour format
-                        slug = f"{slug}-{now.strftime('%H')}:00"
+                        # Format slug to include the hour in 24-hour format for logging
+                        formatted_slug = f"{slug}-{now.strftime('%H')}:00"
                         
                         # Log to console
                         logger.info(
@@ -479,17 +479,17 @@ class MultiEventMonitor:
                             side,
                             price,
                             asset_id,
-                            slug,
+                            formatted_slug,
                             size,
                             size_change,
                             best_bid,
                             best_ask,
                         )
                         
-                        # Write to CSV
+                        # Write to CSV - column order must match headers:
+                        # timestamp_ms, timestamp_iso, timestamp_est, price, size, size_change, side, best_bid, best_ask, token_id, event_slug
                         if self.csv_writer:
                             self.csv_writer.writerow([
-                                slug,  # Move formatted slug to the first column
                                 timestamp_ms,
                                 timestamp_iso,
                                 timestamp_est,
@@ -499,7 +499,8 @@ class MultiEventMonitor:
                                 side,
                                 best_bid,
                                 best_ask,
-                                asset_id  # Move token_id to the last column
+                                asset_id,  # token_id
+                                slug  # event_slug
                             ])
                             self.csv_file.flush()
                     
@@ -535,8 +536,8 @@ class MultiEventMonitor:
                         est_timezone = pytz_timezone("US/Eastern")
                         timestamp_est = now.astimezone(est_timezone).isoformat()
                         
-                        # Format slug to include the hour in 24-hour format
-                        slug = f"{slug}-{now.strftime('%H')}:00"
+                        # Format slug to include the hour in 24-hour format for logging
+                        formatted_slug = f"{slug}-{now.strftime('%H')}:00"
                         
                         # Log to console
                         logger.info(
@@ -545,17 +546,17 @@ class MultiEventMonitor:
                             side,
                             price,
                             asset_id,
-                            slug,
+                            formatted_slug,
                             size,
                             size_change,
                             best_bid,
                             best_ask,
                         )
                         
-                        # Write to CSV
+                        # Write to CSV - column order must match headers:
+                        # timestamp_ms, timestamp_iso, timestamp_est, price, size, size_change, side, best_bid, best_ask, token_id, event_slug
                         if self.csv_writer:
                             self.csv_writer.writerow([
-                                slug,  # Move formatted slug to the first column
                                 timestamp_ms,
                                 timestamp_iso,
                                 timestamp_est,
@@ -565,7 +566,8 @@ class MultiEventMonitor:
                                 side,
                                 best_bid,
                                 best_ask,
-                                asset_id  # Move token_id to the last column
+                                asset_id,  # token_id
+                                slug  # event_slug
                             ])
                             self.csv_file.flush()
                     
