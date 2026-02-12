@@ -595,20 +595,20 @@ class MultiEventMonitor:
                         timestamp_iso,
                         timestamp_est,
                         side.lower(),  # event_type: "bid" or "ask"
-                        price,
-                        size,
-                        size_change,
+                        price,  # price
+                        size,  # size
+                        size_change,  # size_change
                         side,  # "BID" or "ASK"
-                        best_bid,
-                        best_ask,
+                        best_bid if best_bid != "N/A" else "",
+                        best_ask if best_ask != "N/A" else "",
                         asset_id,  # token_id
-                        is_winning_token,
+                        str(is_winning_token).lower(),  # Convert boolean to string
                         outcome,
                         time_since_ticker_change_ms if time_since_ticker_change_ms >= 0 else "",
-                        ticker_changed_recently,
+                        str(ticker_changed_recently).lower(),  # Convert boolean to string
                         "",  # old_tick_size (not applicable for bids/asks)
                         "",  # new_tick_size (not applicable for bids/asks)
-                        market_resolved,
+                        str(market_resolved).lower(),  # Convert boolean to string
                         ""  # error_message (not applicable for bids/asks)
                     ])
                     self.csv_file.flush()
@@ -756,18 +756,18 @@ class MultiEventMonitor:
                 price if price is not None else "",
                 size if size is not None else "",
                 size_change if size_change is not None else "",
-                side,
-                best_bid,
-                best_ask,
-                token_id,
-                is_winning_token,
-                outcome,
+                side if side else "",
+                best_bid if best_bid and best_bid != "N/A" else "",
+                best_ask if best_ask and best_ask != "N/A" else "",
+                token_id if token_id else "",
+                str(is_winning_token).lower() if token_id else "",  # Convert boolean to string
+                outcome if outcome else "",
                 time_since_ticker_change_ms if time_since_ticker_change_ms >= 0 else "",
-                ticker_changed_recently,
-                old_tick_size,
-                new_tick_size,
-                market_resolved,
-                error_message
+                str(ticker_changed_recently).lower() if token_id else "",  # Convert boolean to string
+                old_tick_size if old_tick_size else "",
+                new_tick_size if new_tick_size else "",
+                str(market_resolved).lower(),  # Convert boolean to string
+                error_message if error_message else ""
             ])
             self.csv_file.flush()
             logger.debug("Event saved to unified CSV: %s", self.output_file)
