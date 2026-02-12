@@ -7,3 +7,4 @@ venv/
 bids_*.csv
 bid_analysis_*.png
 test_fifteen_min.py
+market_events.csv

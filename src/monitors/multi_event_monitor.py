@@ -37,7 +37,7 @@ class MultiEventMonitor:
         output_file: str = "bids_0999.csv",
         ws_url: Optional[str] = None,
         check_interval: int = 60,
-        ticker_change_file: str = "ticker_changes.csv",
+        market_events_file: str = "market_events.csv",
     ):
         """
         Initialize the multi-event monitor.
@@ -47,13 +47,13 @@ class MultiEventMonitor:
             output_file: CSV file to save bid data
             ws_url: Optional WebSocket URL override
             check_interval: How often to check if markets are still active (seconds)
-            ticker_change_file: CSV file to save ticker change events
+            market_events_file: CSV file to save market events (open, resolve, tick_size_change, error)
         """
         self.event_slugs = event_slugs
         self.output_file = output_file
         self.ws_url = ws_url or WS_URL
         self.check_interval = check_interval
-        self.ticker_change_file = ticker_change_file
+        self.market_events_file = market_events_file
         
         # Track token IDs and market status
         self.token_ids: dict[str, list[str]] = {}  # slug -> [token_ids]
@@ -67,9 +67,9 @@ class MultiEventMonitor:
         self.csv_file = None
         self.csv_writer = None
         
-        # Ticker change CSV file handles
-        self.ticker_csv_file = None
-        self.ticker_csv_writer = None
+        # Market events CSV file handles
+        self.market_events_csv_file = None
+        self.market_events_csv_writer = None
         
         # WebSocket connection
         self.websocket = None
@@ -98,13 +98,13 @@ class MultiEventMonitor:
             self.csv_file.flush()
         logger.info("CSV output initialized (append mode): %s", self.output_file)
         
-        # Setup ticker change CSV
-        self.ticker_csv_file = open(self.ticker_change_file, "a", newline="")
-        self.ticker_csv_writer = csv.writer(self.ticker_csv_file)
+        # Setup market events CSV
+        self.market_events_csv_file = open(self.market_events_file, "a", newline="")
+        self.market_events_csv_writer = csv.writer(self.market_events_csv_file)
 
         # Check if the file is empty to write headers
-        if self.ticker_csv_file.tell() == 0:
-            self.ticker_csv_writer.writerow([
+        if self.market_events_csv_file.tell() == 0:
+            self.market_events_csv_writer.writerow([
                 "event_slug",
                 "timestamp_ms",
                 "timestamp_iso",
@@ -112,17 +112,18 @@ class MultiEventMonitor:
                 "event_type",
                 "asset_id",
                 "old_tick_size",
-                "new_tick_size"
+                "new_tick_size",
+                "error_message"
             ])
-            self.ticker_csv_file.flush()
-        logger.info("Ticker change CSV initialized (append mode): %s", self.ticker_change_file)
+            self.market_events_csv_file.flush()
+        logger.info("Market events CSV initialized (append mode): %s", self.market_events_file)
 
     def close_csv(self):
         """Close CSV files."""
         if self.csv_file:
             self.csv_file.close()
-        if self.ticker_csv_file:
-            self.ticker_csv_file.close()
+        if self.market_events_csv_file:
+            self.market_events_csv_file.close()
 
     async def fetch_token_ids_for_slug(self, slug: str) -> list[str]:
         """
@@ -165,19 +166,43 @@ class MultiEventMonitor:
         logger.info("Initializing %d markets...", len(self.event_slugs))
         
         for slug in self.event_slugs:
-            token_ids = await self.fetch_token_ids_for_slug(slug)
-            if token_ids:
-                self.token_ids[slug] = token_ids
-                self.market_active[slug] = True
-                
-                # Map token IDs to slugs for reverse lookup
-                for token_id in token_ids:
-                    self.slug_by_token[token_id] = slug
+            try:
+                token_ids = await self.fetch_token_ids_for_slug(slug)
+                if token_ids:
+                    self.token_ids[slug] = token_ids
+                    self.market_active[slug] = True
                     
-                logger.info("Initialized market: %s (active)", slug)
-            else:
-                logger.warning("Failed to initialize market: %s", slug)
+                    # Map token IDs to slugs for reverse lookup
+                    for token_id in token_ids:
+                        self.slug_by_token[token_id] = slug
+                    
+                    # Log market_open event for each token
+                    for token_id in token_ids:
+                        self.log_market_event(
+                            slug=slug,
+                            event_type="market_open",
+                            asset_id=token_id
+                        )
+                        
+                    logger.info("Initialized market: %s (active)", slug)
+                else:
+                    logger.warning("Failed to initialize market: %s", slug)
+                    self.market_active[slug] = False
+                    # Log error event
+                    self.log_market_event(
+                        slug=slug,
+                        event_type="error",
+                        error_message="Failed to fetch token IDs for market"
+                    )
+            except Exception as e:
+                logger.error("Error initializing market %s: %s", slug, e)
                 self.market_active[slug] = False
+                # Log error event
+                self.log_market_event(
+                    slug=slug,
+                    event_type="error",
+                    error_message=f"Error initializing market: {str(e)}"
+                )
         
         # Check if any markets were successfully initialized
         active_count = sum(1 for active in self.market_active.values() if active)
@@ -208,21 +233,44 @@ class MultiEventMonitor:
                 logger.debug("Already monitoring %s, skipping", slug)
                 continue
             
-            # Fetch token IDs for new slug
-            token_ids = await self.fetch_token_ids_for_slug(slug)
-            if token_ids:
-                self.token_ids[slug] = token_ids
-                self.market_active[slug] = True
-                self.event_slugs.append(slug)
-                
-                # Map token IDs to slugs
-                for token_id in token_ids:
-                    self.slug_by_token[token_id] = slug
-                
-                new_token_ids.extend(token_ids)
-                logger.info("Added market: %s with %d tokens", slug, len(token_ids))
-            else:
-                logger.warning("Failed to add market: %s", slug)
+            try:
+                # Fetch token IDs for new slug
+                token_ids = await self.fetch_token_ids_for_slug(slug)
+                if token_ids:
+                    self.token_ids[slug] = token_ids
+                    self.market_active[slug] = True
+                    self.event_slugs.append(slug)
+                    
+                    # Map token IDs to slugs
+                    for token_id in token_ids:
+                        self.slug_by_token[token_id] = slug
+                    
+                    # Log market_open event for each token
+                    for token_id in token_ids:
+                        self.log_market_event(
+                            slug=slug,
+                            event_type="market_open",
+                            asset_id=token_id
+                        )
+                    
+                    new_token_ids.extend(token_ids)
+                    logger.info("Added market: %s with %d tokens", slug, len(token_ids))
+                else:
+                    logger.warning("Failed to add market: %s", slug)
+                    # Log error event
+                    self.log_market_event(
+                        slug=slug,
+                        event_type="error",
+                        error_message="Failed to fetch token IDs for new market"
+                    )
+            except Exception as e:
+                logger.error("Error adding market %s: %s", slug, e)
+                # Log error event
+                self.log_market_event(
+                    slug=slug,
+                    event_type="error",
+                    error_message=f"Error adding market: {str(e)}"
+                )
         
         # Subscribe to new token IDs
         if new_token_ids:
@@ -237,6 +285,14 @@ class MultiEventMonitor:
                 logger.info("Subscribed to %d new token IDs", len(new_token_ids))
             except Exception as e:
                 logger.error("Error subscribing to new markets: %s", e)
+                # Log error for each new slug
+                for slug in new_slugs:
+                    if slug in self.token_ids:
+                        self.log_market_event(
+                            slug=slug,
+                            event_type="error",
+                            error_message=f"Error subscribing to market: {str(e)}"
+                        )
     
     async def remove_markets(self, slugs_to_remove: list[str]):
         """
@@ -312,8 +368,23 @@ class MultiEventMonitor:
                         logger.info("Market %s has ended. Marking as inactive.", slug)
                         self.market_active[slug] = False
                         
+                        # Log market_resolved event for each token in this market
+                        token_ids = self.token_ids.get(slug, [])
+                        for token_id in token_ids:
+                            self.log_market_event(
+                                slug=slug,
+                                event_type="market_resolved",
+                                asset_id=token_id
+                            )
+                        
                 except Exception as e:
                     logger.error("Error checking market status for %s: %s", slug, e)
+                    # Log error event
+                    self.log_market_event(
+                        slug=slug,
+                        event_type="error",
+                        error_message=f"Error checking market status: {str(e)}"
+                    )
             
             # Check if all markets are inactive
             active_count = sum(1 for active in self.market_active.values() if active)
@@ -513,6 +584,64 @@ class MultiEventMonitor:
         print(f"Top 5 Bids: {[f'price: {bid['price']}, size: {bid['size']}' for bid in bids_display]}")
         print(f"Top 5 Asks: {[f'price: {ask['price']}, size: {ask['size']}' for ask in asks_display]}")
 
+    def log_market_event(
+        self,
+        slug: str,
+        event_type: str,
+        asset_id: str = "",
+        old_tick_size: str = "",
+        new_tick_size: str = "",
+        error_message: str = ""
+    ):
+        """
+        Log a market event to the market events CSV file.
+        
+        Args:
+            slug: Event slug
+            event_type: Type of event (market_open, market_resolved, tick_size_change, error)
+            asset_id: Asset ID (token ID), optional
+            old_tick_size: Old tick size for tick_size_change events, optional
+            new_tick_size: New tick size for tick_size_change events, optional
+            error_message: Error message for error events, optional
+        """
+        # Get current time for timestamp calculations
+        now = datetime.utcnow()
+        
+        # Create timestamp in milliseconds
+        timestamp_ms = int(now.timestamp() * 1000)
+        
+        # Create ISO timestamp
+        timestamp_iso = now.isoformat() + "Z"
+        
+        # Convert timestamp to EST
+        est_timezone = pytz_timezone("US/Eastern")
+        timestamp_est = now.astimezone(est_timezone).isoformat()
+        
+        # Log to console
+        logger.info(
+            "[%s] Market event: %s for %s (asset: %s)",
+            timestamp_iso,
+            event_type,
+            slug,
+            asset_id or "N/A",
+        )
+        
+        # Write to market events CSV
+        if self.market_events_csv_writer:
+            self.market_events_csv_writer.writerow([
+                slug,
+                timestamp_ms,
+                timestamp_iso,
+                timestamp_est,
+                event_type,
+                asset_id,
+                old_tick_size,
+                new_tick_size,
+                error_message
+            ])
+            self.market_events_csv_file.flush()
+            logger.debug("Market event saved to %s", self.market_events_file)
+
     def process_ticker_change(self, data: dict[str, Any]):
         """
         Process a tick_size_change event.
@@ -536,47 +665,14 @@ class MultiEventMonitor:
             logger.debug("Unknown asset_id in ticker change: %s", asset_id)
             return
         
-        # Get current time for timestamp calculations
-        now = datetime.utcnow()
-        
-        # Extract timestamp from data or use current time
-        timestamp_ms = data.get("timestamp", int(now.timestamp() * 1000))
-        
-        # Create ISO timestamp
-        timestamp_iso = now.isoformat() + "Z"
-        
-        # Convert timestamp to EST
-        est_timezone = pytz_timezone("US/Eastern")
-        timestamp_est = now.astimezone(est_timezone).isoformat()
-        
-        # Get event type
-        event_type = data.get("event_type", "tick_size_change")
-        
-        # Format slug to include the hour in 24-hour format
-        slug = f"{slug}-{now.strftime('%H')}:00"
-        
-        # Log to console
-        logger.info(
-            "[%s] Ticker change event for %s (slug: %s)",
-            timestamp_iso,
-            asset_id,
-            slug,
+        # Log the tick_size_change event
+        self.log_market_event(
+            slug=slug,
+            event_type="tick_size_change",
+            asset_id=asset_id,
+            old_tick_size=data.get("old_tick_size", ""),
+            new_tick_size=data.get("new_tick_size", "")
         )
-        
-        # Write to ticker change CSV
-        if self.ticker_csv_writer:
-            self.ticker_csv_writer.writerow([
-                slug,  # Move formatted slug to the first column
-                timestamp_ms,
-                timestamp_iso,
-                timestamp_est,
-                event_type,
-                asset_id,
-                data.get("old_tick_size"),
-                data.get("new_tick_size")
-            ])
-            self.ticker_csv_file.flush()
-            logger.debug("Ticker change event saved to %s", self.ticker_change_file)
 
     async def subscribe_and_monitor(self):
         """Connect to WebSocket and monitor book updates for all markets."""
@@ -667,8 +763,32 @@ class MultiEventMonitor:
 
                         except json.JSONDecodeError:
                             logger.error("Failed to decode message: %s", message)
+                            # Log a single decode error (not market-specific)
+                            self.log_market_event(
+                                slug="N/A",
+                                event_type="error",
+                                error_message=f"Failed to decode WebSocket message: {message[:100]}"
+                            )
                         except Exception as e:
                             logger.error("Error processing message: %s", e)
+                            # Determine if error is for a specific market
+                            try:
+                                data = json.loads(message) if isinstance(message, str) else message
+                                asset_id = data.get("asset_id", "")
+                                slug = self.slug_by_token.get(asset_id, "N/A")
+                                self.log_market_event(
+                                    slug=slug,
+                                    event_type="error",
+                                    asset_id=asset_id,
+                                    error_message=f"Error processing message: {str(e)}"
+                                )
+                            except:
+                                # If we can't determine the market, log once without market
+                                self.log_market_event(
+                                    slug="N/A",
+                                    event_type="error",
+                                    error_message=f"Error processing message: {str(e)}"
+                                )
 
                 except asyncio.CancelledError:
                     logger.info("Monitoring cancelled")
@@ -682,12 +802,26 @@ class MultiEventMonitor:
 
         except websockets.exceptions.ConnectionClosedError as e:
             logger.error("WebSocket connection closed unexpectedly: %s", e)
+            # Log error for all markets
+            for slug in self.event_slugs:
+                self.log_market_event(
+                    slug=slug,
+                    event_type="error",
+                    error_message=f"WebSocket connection closed unexpectedly: {str(e)}"
+                )
             logger.info("Attempting to reconnect...")
             await asyncio.sleep(5)  # Wait before reconnecting
             await self.subscribe_and_monitor()  # Retry connection
 
         except websockets.exceptions.WebSocketException as e:
             logger.error("WebSocket error: %s", e)
+            # Log error for all markets
+            for slug in self.event_slugs:
+                self.log_market_event(
+                    slug=slug,
+                    event_type="error",
+                    error_message=f"WebSocket error: {str(e)}"
+                )
 
         finally:
             self.running = False
