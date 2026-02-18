@@ -419,8 +419,6 @@ class MultiEventMonitor:
             else:
                 logger.debug("%d/%d markets still active", active_count, len(self.event_slugs))
 
-        return timestamp_ms, timestamp_iso, timestamp_est
-    
     def _get_timestamps(self) -> tuple[int, str, str]:
         """
         Get current timestamps in various formats.
@@ -885,16 +883,16 @@ class MultiEventMonitor:
             logger.error("Failed to initialize markets. Exiting.")
             return
 
-        # Get all token IDs to subscribe to
-        all_token_ids = []
+        # Verify we have token IDs before starting
+        initial_token_ids = []
         for token_ids in self.token_ids.values():
-            all_token_ids.extend(token_ids)
+            initial_token_ids.extend(token_ids)
         
-        if not all_token_ids:
+        if not initial_token_ids:
             logger.error("No token IDs to subscribe to. Exiting.")
             return
 
-        logger.info("Subscribing to %d token IDs across %d markets", len(all_token_ids), len(self.token_ids))
+        logger.info("Subscribing to %d token IDs across %d markets", len(initial_token_ids), len(self.token_ids))
 
         self.running = True
         
@@ -904,98 +902,115 @@ class MultiEventMonitor:
         try:
             while self.running:
                 try:
+                    # Build current token list fresh on each (re)connect so that
+                    # dynamically added/removed markets are reflected.
+                    all_token_ids = []
+                    for token_ids in self.token_ids.values():
+                        all_token_ids.extend(token_ids)
+
+                    if not all_token_ids:
+                        logger.warning("No token IDs to subscribe to. Waiting before retry...")
+                        await asyncio.sleep(5)
+                        continue
+
                     # Polymarket server sends pings every 30s.
                     # We disable client-side pings (ping_interval=None) to avoid "INVALID OPERATION" errors
                     # but keep ping_timeout to ensure we disconnect if the server stops sending pings.
                     async with websockets.connect(self.ws_url, ping_interval=None, ping_timeout=60) as websocket:
                         self.websocket = websocket
-                        logger.info("WebSocket connected.")
+                        try:
+                            logger.info("WebSocket connected.")
 
-                        # Subscribe to the book channel for all tokens
-                        subscribe_msg = {
-                            "type": "subscribe",
-                            "assets_ids": all_token_ids,
-                            "custom_feature_enabled": False
-                        }
-                        logger.info("Subscription message: %s", json.dumps(subscribe_msg))
-                        await websocket.send(json.dumps(subscribe_msg))
-                        logger.info("Subscribed to book updates for %d tokens", len(all_token_ids))
+                            # Subscribe to the book channel for all tokens
+                            subscribe_msg = {
+                                "type": "subscribe",
+                                "assets_ids": all_token_ids,
+                                "custom_feature_enabled": False
+                            }
+                            logger.info("Subscription message: %s", json.dumps(subscribe_msg))
+                            await websocket.send(json.dumps(subscribe_msg))
+                            logger.info("Subscribed to book updates for %d tokens", len(all_token_ids))
 
-                        # Listen for updates
-                        async for message in websocket:
-                            if not self.running:
-                                break
+                            # Listen for updates
+                            async for message in websocket:
+                                if not self.running:
+                                    break
 
-                            try:
-                            # Check for "INVALID OPERATION" text message which might come from server
-                                if message == "INVALID OPERATION":
-                                    logger.debug("Received 'INVALID OPERATION' from server (likely response to ping/frame), dragging on.")
-                                    continue
-
-                                data = json.loads(message)
-
-                                # Check if the message is a list (empty message)
-                                if isinstance(data, list):
-                                    logger.debug("Received empty list message")
-                                    continue
-
-                                # Check if this is a book update
-                                msg_type = data.get("event_type", data.get("type", ""))
-
-                                if msg_type in ["book"]:
-                                    # Extract asset ID to determine which market this is for
-                                    asset_id = data.get("asset_id")
-                                    if not asset_id:
-                                        logger.debug("No asset_id in message")
-                                        continue
-                                    
-                                    # Look up the slug for this token
-                                    slug = self.slug_by_token.get(asset_id)
-                                    if not slug:
-                                        logger.debug("Unknown asset_id: %s", asset_id)
-                                        continue
-                                    
-                                    # Check if this market is still active
-                                    if not self.market_active.get(slug, False):
-                                        logger.debug("Ignoring update for inactive market: %s", slug)
-                                        continue
-
-                                    print(f"Detected Event Type: {msg_type} (Book Event) for market slug: {slug}")
-                                    self.process_book_update(data)
-
-                                # Handle tick_size_change event
-                                if msg_type == "tick_size_change":
-                                    print(f"Tick Size Change Event Detected: {data}")  # Print the tick size change message
-                                    self.process_ticker_change(data)
-
-                            except json.JSONDecodeError:
-                                logger.error("Failed to decode message: %s", message)
-                                # Log a single decode error (not market-specific)
-                                self.log_market_event(
-                                    slug="N/A",
-                                    event_type="error",
-                                    error_message=f"Failed to decode WebSocket message: {message[:100]}"
-                                )
-                            except Exception as e:
-                                logger.error("Error processing message: %s", e)
-                                # Determine if error is for a specific market
                                 try:
-                                    data = json.loads(message) if isinstance(message, str) else message
-                                    asset_id = data.get("asset_id", "")
-                                    slug = self.slug_by_token.get(asset_id, "N/A")
-                                    self.log_market_event(
-                                        slug=slug,
-                                        event_type="error",
-                                        asset_id=asset_id,
-                                        error_message=f"Error processing message: {str(e)}"
-                                    )
-                                except:
-                                    # If we can't determine the market, log once without market
+                                    # Check for "INVALID OPERATION" text message which might come from server
+                                    if message == "INVALID OPERATION":
+                                        logger.debug("Received 'INVALID OPERATION' from server (likely response to ping/frame), dragging on.")
+                                        continue
+
+                                    data = json.loads(message)
+
+                                    # Check if the message is a list (empty message)
+                                    if isinstance(data, list):
+                                        logger.debug("Received empty list message")
+                                        continue
+
+                                    # Check if this is a book update
+                                    msg_type = data.get("event_type", data.get("type", ""))
+
+                                    if msg_type in ["book"]:
+                                        # Extract asset ID to determine which market this is for
+                                        asset_id = data.get("asset_id")
+                                        if not asset_id:
+                                            logger.debug("No asset_id in message")
+                                            continue
+                                        
+                                        # Look up the slug for this token
+                                        slug = self.slug_by_token.get(asset_id)
+                                        if not slug:
+                                            logger.debug("Unknown asset_id: %s", asset_id)
+                                            continue
+                                        
+                                        # Check if this market is still active
+                                        if not self.market_active.get(slug, False):
+                                            logger.debug("Ignoring update for inactive market: %s", slug)
+                                            continue
+
+                                        print(f"Detected Event Type: {msg_type} (Book Event) for market slug: {slug}")
+                                        self.process_book_update(data)
+
+                                    # Handle tick_size_change event
+                                    if msg_type == "tick_size_change":
+                                        print(f"Tick Size Change Event Detected: {data}")  # Print the tick size change message
+                                        self.process_ticker_change(data)
+
+                                except json.JSONDecodeError:
+                                    logger.error("Failed to decode message: %s", message)
+                                    # Log a single decode error (not market-specific)
                                     self.log_market_event(
                                         slug="N/A",
                                         event_type="error",
-                                        error_message=f"Error processing message: {str(e)}"
+                                        error_message=f"Failed to decode WebSocket message: {message[:100]}"
                                     )
+                                except Exception as e:
+                                    logger.error("Error processing message: %s", e)
+                                    # Determine if error is for a specific market
+                                    try:
+                                        data = json.loads(message) if isinstance(message, str) else message
+                                        asset_id = data.get("asset_id", "")
+                                        slug = self.slug_by_token.get(asset_id, "N/A")
+                                        self.log_market_event(
+                                            slug=slug,
+                                            event_type="error",
+                                            asset_id=asset_id,
+                                            error_message=f"Error processing message: {str(e)}"
+                                        )
+                                    except Exception:
+                                        # If we can't determine the market, log once without market
+                                        self.log_market_event(
+                                            slug="N/A",
+                                            event_type="error",
+                                            error_message=f"Error processing message: {str(e)}"
+                                        )
+                        finally:
+                            # Clear the reference so concurrent tasks (add_markets,
+                            # remove_markets, check_market_status) don't try to send
+                            # on a closed connection.
+                            self.websocket = None
 
                 except websockets.exceptions.ConnectionClosedError as e:
                     logger.error("WebSocket connection closed unexpectedly: %s", e)
