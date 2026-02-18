@@ -419,6 +419,8 @@ class MultiEventMonitor:
             else:
                 logger.debug("%d/%d markets still active", active_count, len(self.event_slugs))
 
+        return timestamp_ms, timestamp_iso, timestamp_est
+    
     def _get_timestamps(self) -> tuple[int, str, str]:
         """
         Get current timestamps in various formats.
@@ -426,13 +428,14 @@ class MultiEventMonitor:
         Returns:
             Tuple of (timestamp_ms, timestamp_iso, timestamp_est)
         """
-        now = datetime.utcnow()
-        timestamp_ms = int(now.timestamp() * 1000)
-        timestamp_iso = now.isoformat() + "Z"
+        # Get UTC time with timezone info
+        now_utc = datetime.now(pytz_timezone("UTC"))
+        timestamp_ms = int(now_utc.timestamp() * 1000)
+        timestamp_iso = now_utc.strftime("%Y-%m-%d %H:%M:%S")
         
-        # Convert timestamp to EST
+        # Convert to EST
         est_timezone = pytz_timezone("US/Eastern")
-        timestamp_est = now.astimezone(est_timezone).isoformat()
+        timestamp_est = now_utc.astimezone(est_timezone).strftime("%Y-%m-%d %H:%M:%S")
         
         return timestamp_ms, timestamp_iso, timestamp_est
     
@@ -485,7 +488,7 @@ class MultiEventMonitor:
             if timestamp_ms:
                 timestamp = timestamp_ms // 1000  # Convert ms to seconds
             else:
-                timestamp = int(datetime.utcnow().timestamp())
+                timestamp = int(datetime.now(pytz_timezone("UTC")).timestamp())
         
         # Convert timestamp to EST time
         est_timezone = pytz_timezone("US/Eastern")
@@ -536,8 +539,8 @@ class MultiEventMonitor:
             price = float(order.get("price", 0))
             size = float(order.get("size", 0))
             
-            # Check if this order is at our target price
-            if abs(price - TARGET_PRICE) >= PRICE_TOLERANCE:
+            # Check if this order is at our target price (>= 0.99 to catch sweepers and resolution)
+            if price < 0.99:
                 return
             
             # Calculate size change from previous
@@ -589,29 +592,39 @@ class MultiEventMonitor:
                 
                 # Write to unified CSV
                 if self.csv_writer:
-                    self.csv_writer.writerow([
-                        formatted_slug,  # event_slug (first column, formatted with EST time)
-                        event_timestamp_ms,
-                        timestamp_iso,
-                        timestamp_est,
-                        side.lower(),  # event_type: "bid" or "ask"
-                        price,  # price
-                        size,  # size
-                        size_change,  # size_change
-                        side,  # "BID" or "ASK"
-                        best_bid if best_bid != "N/A" else "",
-                        best_ask if best_ask != "N/A" else "",
-                        asset_id,  # token_id
-                        str(is_winning_token).lower(),  # Convert boolean to string
-                        outcome,
-                        time_since_ticker_change_ms if time_since_ticker_change_ms >= 0 else "",
-                        str(ticker_changed_recently).lower(),  # Convert boolean to string
-                        "",  # old_tick_size (not applicable for bids/asks)
-                        "",  # new_tick_size (not applicable for bids/asks)
-                        str(market_resolved).lower(),  # Convert boolean to string
-                        ""  # error_message (not applicable for bids/asks)
-                    ])
-                    self.csv_file.flush()
+                    try:
+                        # Placeholders for non-order/market fields
+                        old_tick_size = ""
+                        new_tick_size = ""
+                        error_message = ""
+                        
+                        self.csv_writer.writerow([
+                            formatted_slug,
+                            event_timestamp_ms,
+                            timestamp_iso,
+                            timestamp_est,
+                            side.lower(),
+                            price,
+                            size,
+                            size_change,
+                            side.upper(),
+                            best_bid,
+                            best_ask,
+                            asset_id,
+                            str(is_winning_token).lower(),
+                            outcome,
+                            time_since_ticker_change_ms,
+                            str(ticker_changed_recently).lower(),
+                            old_tick_size,
+                            new_tick_size,
+                            str(market_resolved).lower(),
+                            error_message
+                        ])
+                        self.csv_file.flush()
+                    except Exception as e:
+                        logger.error("Failed to write to CSV: %s", e)
+                else:
+                    logger.warning("CSV Writer is None! Cannot write order update.")
             
             # Update previous size
             self.previous_sizes[cache_key] = size
@@ -656,11 +669,19 @@ class MultiEventMonitor:
             return
 
         # Extract basic info
-        timestamp_ms = data.get("timestamp", int(datetime.utcnow().timestamp() * 1000))
+        try:
+            timestamp_raw = data.get("timestamp")
+            timestamp_ms = int(timestamp_raw) if timestamp_raw is not None else int(datetime.utcnow().timestamp() * 1000)
+        except (ValueError, TypeError):
+            timestamp_ms = int(datetime.utcnow().timestamp() * 1000)
         
         # Extract bids and asks arrays
-        bids = data.get("bids", [])[:MAX_ORDERBOOK_DEPTH]  # Limit to top N bids
-        asks = data.get("asks", [])[:MAX_ORDERBOOK_DEPTH]  # Limit to top N asks
+        raw_bids = data.get("bids", [])
+        raw_asks = data.get("asks", [])
+        
+        # Sort bids descending (highest price first) and asks ascending (lowest price first) before limiting
+        bids = sorted(raw_bids, key=lambda x: float(x["price"]), reverse=True)[:MAX_ORDERBOOK_DEPTH]
+        asks = sorted(raw_asks, key=lambda x: float(x["price"]))[:MAX_ORDERBOOK_DEPTH]
         
         # Calculate best_bid and best_ask
         best_bid = bids[0]["price"] if bids else "N/A"
@@ -830,7 +851,12 @@ class MultiEventMonitor:
             return
         
         # Track ticker change timestamp for sweeper analysis
-        timestamp_ms = data.get("timestamp", int(datetime.utcnow().timestamp() * 1000))
+        try:
+            timestamp_raw = data.get("timestamp")
+            timestamp_ms = int(timestamp_raw) if timestamp_raw is not None else int(datetime.utcnow().timestamp() * 1000)
+        except (ValueError, TypeError):
+            timestamp_ms = int(datetime.utcnow().timestamp() * 1000)
+            
         self.last_ticker_change[asset_id] = timestamp_ms
         
         # Log the tick_size_change event
@@ -870,131 +896,151 @@ class MultiEventMonitor:
 
         logger.info("Subscribing to %d token IDs across %d markets", len(all_token_ids), len(self.token_ids))
 
+        self.running = True
+        
+        # Start market status checking task
+        status_task = asyncio.create_task(self.check_market_status())
+
         try:
-            async with websockets.connect(self.ws_url) as websocket:
-                self.websocket = websocket
-                self.running = True
-
-                # Subscribe to the book channel for all tokens
-                subscribe_msg = {
-                    "type": "subscribe",
-                    "assets_ids": all_token_ids,
-                    "custom_feature_enabled": False
-                }
-                logger.info("Subscription message: %s", json.dumps(subscribe_msg))
-                await websocket.send(json.dumps(subscribe_msg))
-                logger.info("Subscribed to book updates for %d tokens", len(all_token_ids))
-
-                # Start market status checking task
-                status_task = asyncio.create_task(self.check_market_status())
-
-                # Listen for updates
+            while self.running:
                 try:
-                    async for message in websocket:
-                        if not self.running:
-                            break
+                    # Polymarket server sends pings every 30s.
+                    # We disable client-side pings (ping_interval=None) to avoid "INVALID OPERATION" errors
+                    # but keep ping_timeout to ensure we disconnect if the server stops sending pings.
+                    async with websockets.connect(self.ws_url, ping_interval=None, ping_timeout=60) as websocket:
+                        self.websocket = websocket
+                        logger.info("WebSocket connected.")
 
-                        try:
-                            data = json.loads(message)
+                        # Subscribe to the book channel for all tokens
+                        subscribe_msg = {
+                            "type": "subscribe",
+                            "assets_ids": all_token_ids,
+                            "custom_feature_enabled": False
+                        }
+                        logger.info("Subscription message: %s", json.dumps(subscribe_msg))
+                        await websocket.send(json.dumps(subscribe_msg))
+                        logger.info("Subscribed to book updates for %d tokens", len(all_token_ids))
 
-                            # Check if the message is a list (empty message)
-                            if isinstance(data, list):
-                                logger.debug("Received empty list message")
-                                continue
+                        # Listen for updates
+                        async for message in websocket:
+                            if not self.running:
+                                break
 
-                            # Check if this is a book update
-                            msg_type = data.get("event_type", data.get("type", ""))
-
-                            if msg_type in ["book"]:
-                                # Extract asset ID to determine which market this is for
-                                asset_id = data.get("asset_id")
-                                if not asset_id:
-                                    logger.debug("No asset_id in message")
-                                    continue
-                                
-                                # Look up the slug for this token
-                                slug = self.slug_by_token.get(asset_id)
-                                if not slug:
-                                    logger.debug("Unknown asset_id: %s", asset_id)
-                                    continue
-                                
-                                # Check if this market is still active
-                                if not self.market_active.get(slug, False):
-                                    logger.debug("Ignoring update for inactive market: %s", slug)
-                                    continue
-
-                                print(f"Detected Event Type: {msg_type} (Book Event) for market slug: {slug}")
-                                self.process_book_update(data)
-
-                            # Handle tick_size_change event
-                            if msg_type == "tick_size_change":
-                                print(f"Tick Size Change Event Detected: {data}")  # Print the tick size change message
-                                self.process_ticker_change(data)
-
-                        except json.JSONDecodeError:
-                            logger.error("Failed to decode message: %s", message)
-                            # Log a single decode error (not market-specific)
-                            self.log_market_event(
-                                slug="N/A",
-                                event_type="error",
-                                error_message=f"Failed to decode WebSocket message: {message[:100]}"
-                            )
-                        except Exception as e:
-                            logger.error("Error processing message: %s", e)
-                            # Determine if error is for a specific market
                             try:
-                                data = json.loads(message) if isinstance(message, str) else message
-                                asset_id = data.get("asset_id", "")
-                                slug = self.slug_by_token.get(asset_id, "N/A")
-                                self.log_market_event(
-                                    slug=slug,
-                                    event_type="error",
-                                    asset_id=asset_id,
-                                    error_message=f"Error processing message: {str(e)}"
-                                )
-                            except:
-                                # If we can't determine the market, log once without market
+                            # Check for "INVALID OPERATION" text message which might come from server
+                                if message == "INVALID OPERATION":
+                                    logger.debug("Received 'INVALID OPERATION' from server (likely response to ping/frame), dragging on.")
+                                    continue
+
+                                data = json.loads(message)
+
+                                # Check if the message is a list (empty message)
+                                if isinstance(data, list):
+                                    logger.debug("Received empty list message")
+                                    continue
+
+                                # Check if this is a book update
+                                msg_type = data.get("event_type", data.get("type", ""))
+
+                                if msg_type in ["book"]:
+                                    # Extract asset ID to determine which market this is for
+                                    asset_id = data.get("asset_id")
+                                    if not asset_id:
+                                        logger.debug("No asset_id in message")
+                                        continue
+                                    
+                                    # Look up the slug for this token
+                                    slug = self.slug_by_token.get(asset_id)
+                                    if not slug:
+                                        logger.debug("Unknown asset_id: %s", asset_id)
+                                        continue
+                                    
+                                    # Check if this market is still active
+                                    if not self.market_active.get(slug, False):
+                                        logger.debug("Ignoring update for inactive market: %s", slug)
+                                        continue
+
+                                    print(f"Detected Event Type: {msg_type} (Book Event) for market slug: {slug}")
+                                    self.process_book_update(data)
+
+                                # Handle tick_size_change event
+                                if msg_type == "tick_size_change":
+                                    print(f"Tick Size Change Event Detected: {data}")  # Print the tick size change message
+                                    self.process_ticker_change(data)
+
+                            except json.JSONDecodeError:
+                                logger.error("Failed to decode message: %s", message)
+                                # Log a single decode error (not market-specific)
                                 self.log_market_event(
                                     slug="N/A",
                                     event_type="error",
-                                    error_message=f"Error processing message: {str(e)}"
+                                    error_message=f"Failed to decode WebSocket message: {message[:100]}"
                                 )
+                            except Exception as e:
+                                logger.error("Error processing message: %s", e)
+                                # Determine if error is for a specific market
+                                try:
+                                    data = json.loads(message) if isinstance(message, str) else message
+                                    asset_id = data.get("asset_id", "")
+                                    slug = self.slug_by_token.get(asset_id, "N/A")
+                                    self.log_market_event(
+                                        slug=slug,
+                                        event_type="error",
+                                        asset_id=asset_id,
+                                        error_message=f"Error processing message: {str(e)}"
+                                    )
+                                except:
+                                    # If we can't determine the market, log once without market
+                                    self.log_market_event(
+                                        slug="N/A",
+                                        event_type="error",
+                                        error_message=f"Error processing message: {str(e)}"
+                                    )
 
-                except asyncio.CancelledError:
-                    logger.info("Monitoring cancelled")
-                finally:
-                    # Cancel status checking task
-                    status_task.cancel()
-                    try:
-                        await status_task
-                    except asyncio.CancelledError:
-                        pass
+                except websockets.exceptions.ConnectionClosedError as e:
+                    logger.error("WebSocket connection closed unexpectedly: %s", e)
+                    # Log error for all markets
+                    for slug in self.event_slugs:
+                        self.log_market_event(
+                            slug=slug,
+                            event_type="error",
+                            error_message=f"WebSocket connection closed unexpectedly: {str(e)}"
+                        )
+                    if self.running:
+                        logger.info("Attempting to reconnect in 5 seconds...")
+                        await asyncio.sleep(5)  # Wait before reconnecting
 
-        except websockets.exceptions.ConnectionClosedError as e:
-            logger.error("WebSocket connection closed unexpectedly: %s", e)
-            # Log error for all markets
-            for slug in self.event_slugs:
-                self.log_market_event(
-                    slug=slug,
-                    event_type="error",
-                    error_message=f"WebSocket connection closed unexpectedly: {str(e)}"
-                )
-            logger.info("Attempting to reconnect...")
-            await asyncio.sleep(5)  # Wait before reconnecting
-            await self.subscribe_and_monitor()  # Retry connection
+                except websockets.exceptions.WebSocketException as e:
+                    logger.error("WebSocket error: %s", e)
+                    # Log error for all markets
+                    for slug in self.event_slugs:
+                        self.log_market_event(
+                            slug=slug,
+                            event_type="error",
+                            error_message=f"WebSocket error: {str(e)}"
+                        )
+                    if self.running:
+                        logger.info("Attempting to reconnect in 5 seconds...")
+                        await asyncio.sleep(5)
 
-        except websockets.exceptions.WebSocketException as e:
-            logger.error("WebSocket error: %s", e)
-            # Log error for all markets
-            for slug in self.event_slugs:
-                self.log_market_event(
-                    slug=slug,
-                    event_type="error",
-                    error_message=f"WebSocket error: {str(e)}"
-                )
+                except Exception as e:
+                    logger.error("Unexpected error in WebSocket loop: %s", e)
+                    if self.running:
+                        logger.info("Attempting to reconnect in 5 seconds...")
+                        await asyncio.sleep(5)
 
+        except asyncio.CancelledError:
+            logger.info("Monitoring cancelled")
+            
         finally:
             self.running = False
+            # Cancel status checking task
+            status_task.cancel()
+            try:
+                await status_task
+            except asyncio.CancelledError:
+                pass
+                
             self.close_csv()
 
     async def run(self):

@@ -54,6 +54,7 @@ class BookMonitor:
         self.previous_sizes = {}  # Track previous sizes at each price level and side
         self.csv_file = None
         self.csv_writer = None
+        self.running = False
 
     def setup_csv(self):
         """Setup CSV file with headers."""
@@ -104,7 +105,11 @@ class BookMonitor:
             return
 
         # Extract basic info
-        timestamp_ms = data.get("timestamp", int(datetime.utcnow().timestamp() * 1000))
+        try:
+            timestamp_raw = data.get("timestamp")
+            timestamp_ms = int(timestamp_raw) if timestamp_raw is not None else int(datetime.utcnow().timestamp() * 1000)
+        except (ValueError, TypeError):
+            timestamp_ms = int(datetime.utcnow().timestamp() * 1000)
         event_slug = data.get("market", "unknown")
         
         # Extract bids and asks arrays
@@ -121,24 +126,26 @@ class BookMonitor:
                 price = float(bid.get("price", 0))
                 size = float(bid.get("size", 0))
                 
-                # Check if this bid is at our target price
-                if abs(price - TARGET_PRICE) < PRICE_TOLERANCE:
-                    side = "BID"
+                # Check if this bid is at our target price (>= 0.99)
+                if price < 0.99:
+                    continue
+                
+                side = "BID"
                     
-                    # Calculate size change from previous
-                    cache_key = f"{price}_{side}"
-                    previous_size = self.previous_sizes.get(cache_key, 0.0)
-                    size_change = size - previous_size
+                # Calculate size change from previous
+                cache_key = f"{price}_{side}"
+                previous_size = self.previous_sizes.get(cache_key, 0.0)
+                size_change = size - previous_size
                     
                     # Only log if this is a new entry or increased size
                     if size_change > 0:
                         # Get current timestamp with milliseconds
                         now = datetime.utcnow()
-                        timestamp_iso = now.isoformat() + "Z"
+                        timestamp_iso = now.strftime("%Y-%m-%d %H:%M:%S")
                         
                         # Convert timestamp to EST
                         est_timezone = timezone("US/Eastern")
-                        timestamp_est = now.astimezone(est_timezone).isoformat()
+                        timestamp_est = now.astimezone(est_timezone).strftime("%Y-%m-%d %H:%M:%S")
                         
                         # Log to console
                         print(f"\n[{timestamp_iso}] New {side} at {price} (best_bid={best_bid}, best_ask={best_ask})")
@@ -191,11 +198,11 @@ class BookMonitor:
                     if size_change > 0:
                         # Get current timestamp with milliseconds
                         now = datetime.utcnow()
-                        timestamp_iso = now.isoformat() + "Z"
+                        timestamp_iso = now.strftime("%Y-%m-%d %H:%M:%S")
                         
                         # Convert timestamp to EST
                         est_timezone = timezone("US/Eastern")
-                        timestamp_est = now.astimezone(est_timezone).isoformat()
+                        timestamp_est = now.astimezone(est_timezone).strftime("%Y-%m-%d %H:%M:%S")
                         
                         # Log to console
                         print(f"\n[{timestamp_iso}] New {side} at {price} (best_bid={best_bid}, best_ask={best_ask})")
@@ -237,45 +244,73 @@ class BookMonitor:
         print("-" * SEPARATOR_LENGTH)
 
         self.setup_csv()
+        self.running = True
 
         try:
-            async with websockets.connect(self.ws_url) as websocket:
-                # Subscribe to the book channel with event_type filter
-                subscribe_msg = {
-                    "type": "subscribe",
-                    "assets_ids": [self.token_id],
-                    "event_types": ["book"],  # Add event_type filter here
-                    "custom_feature_enabled": False
-                }
-                print(f"Subscription message: {json.dumps(subscribe_msg)}")
-                await websocket.send(json.dumps(subscribe_msg))
-                print(f"Subscribed to book updates for {self.token_id}")
+            while self.running:
+                try:
+                    # Polymarket server sends pings every 30s.
+                    # We disable client-side pings (ping_interval=None) to avoid "INVALID OPERATION" errors
+                    # but keep ping_timeout to ensure we disconnect if the server stops sending pings.
+                    async with websockets.connect(self.ws_url, ping_interval=None, ping_timeout=60) as websocket:
+                        print("WebSocket connected.")
+                        
+                        # Subscribe to the book channel with event_type filter
+                        subscribe_msg = {
+                            "type": "subscribe",
+                            "assets_ids": [self.token_id],
+                            "event_types": ["book"],  # Add event_type filter here
+                            "custom_feature_enabled": False
+                        }
+                        print(f"Subscription message: {json.dumps(subscribe_msg)}")
+                        await websocket.send(json.dumps(subscribe_msg))
+                        print(f"Subscribed to book updates for {self.token_id}")
 
-                # Listen for updates
-                async for message in websocket:
-                    try:
-                        print(f"Received message: {message}")  # Log the raw message
-                        data = json.loads(message)
+                        # Listen for updates
+                        async for message in websocket:
+                            if not self.running:
+                                break
+                                
+                            try:
+                                print(f"Received message: {message}")  # Log the raw message
+                                data = json.loads(message)
 
-                        # Check if the message is a list
-                        if isinstance(data, list):
-                            print("Received an empty list or unexpected list message. Skipping.")
-                            continue
+                                # Check if the message is a list
+                                if isinstance(data, list):
+                                    print("Received an empty list or unexpected list message. Skipping.")
+                                    continue
 
-                        # Check if this is a book update
-                        msg_type = data.get("event_type", data.get("type", ""))
+                                # Check if this is a book update
+                                msg_type = data.get("event_type", data.get("type", ""))
 
-                        if msg_type in ["book"]:
-                            self.process_book_update(data)
+                                if msg_type in ["book"]:
+                                    self.process_book_update(data)
 
-                    except json.JSONDecodeError:
-                        print(f"Failed to decode message: {message}")
-                    except Exception as e:
-                        print(f"Error processing message: {e}")
+                            except json.JSONDecodeError:
+                                print(f"Failed to decode message: {message}")
+                            except Exception as e:
+                                print(f"Error processing message: {e}")
+                
+                except websockets.exceptions.ConnectionClosedError as e:
+                    print(f"WebSocket connection closed unexpectedly: {e}")
+                    print("Attempting to reconnect in 5 seconds...")
+                    await asyncio.sleep(5)
+                
+                except websockets.exceptions.WebSocketException as e:
+                    print(f"WebSocket error: {e}")
+                    print("Attempting to reconnect in 5 seconds...")
+                    await asyncio.sleep(5)
+                
+                except Exception as e:
+                    print(f"Unexpected error: {e}")
+                    print("Attempting to reconnect in 5 seconds...")
+                    await asyncio.sleep(5)
 
-        except websockets.exceptions.WebSocketException as e:
-            print(f"WebSocket error: {e}")
+        except asyncio.CancelledError:
+            print("Monitoring cancelled")
+
         finally:
+            self.running = False
             self.close_csv()
 
     def run(self):
