@@ -67,13 +67,13 @@ def main() -> int:
     )
     multi_parser.add_argument(
         "--output",
-        default="bids_0999.csv",
-        help="Output CSV file (default: bids_0999.csv)"
+        default="sweeper_analysis.csv",
+        help="Unified CSV file for all events (bids, asks, market events) (default: sweeper_analysis.csv)"
     )
     multi_parser.add_argument(
         "--market-events-output",
-        default="market_events.csv",
-        help="Market events CSV file (default: market_events.csv)"
+        default=None,
+        help="[DEPRECATED] Market events are now included in the unified output file. This parameter is ignored."
     )
     multi_parser.add_argument(
         "--ws-url",
@@ -94,13 +94,13 @@ def main() -> int:
     )
     continuous_parser.add_argument(
         "--output",
-        default="bids_0999.csv",
-        help="Output CSV file (default: bids_0999.csv)"
+        default="sweeper_analysis.csv",
+        help="Unified CSV file for all events (bids, asks, market events) (default: sweeper_analysis.csv)"
     )
     continuous_parser.add_argument(
         "--market-events-output",
-        default="market_events.csv",
-        help="Market events CSV file (default: market_events.csv)"
+        default=None,
+        help="[DEPRECATED] Market events are now included in the unified output file. This parameter is ignored."
     )
     continuous_parser.add_argument(
         "--ws-url",
