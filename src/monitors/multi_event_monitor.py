@@ -108,7 +108,7 @@ class MultiEventMonitor:
                 "timestamp_ms",
                 "timestamp_iso",
                 "timestamp_est",
-                "event_type",              # "bid", "ask", "tick_size_change", "market_resolved", "market_open", "error"
+                "event_type",              # "bid", "ask", "last_trade_price", "tick_size_change", "market_resolved", "market_open", "error"
                 "price",                   # For bids/asks only, empty for other events
                 "size",                    # For bids/asks only, empty for other events
                 "size_change",             # For bids/asks only, empty for other events
@@ -726,7 +726,7 @@ class MultiEventMonitor:
         
         Args:
             slug: Event slug
-            event_type: Type of event ("bid", "ask", "tick_size_change", "market_resolved", "market_open", "error")
+            event_type: Type of event ("bid", "ask", "last_trade_price", "tick_size_change", "market_resolved", "market_open", "error")
             token_id: Token ID, optional
             price: Price (for bids/asks), optional
             size: Size (for bids/asks), optional
@@ -868,6 +868,82 @@ class MultiEventMonitor:
             market_resolved=market_resolved,
         )
 
+    def process_last_trade_price(self, data: dict[str, Any]):
+        """
+        Process a last_trade_price event (actual executed trade).
+
+        Only logs trades where price >= 0.99 for sweep signal analysis.
+
+        Args:
+            data: WebSocket message data with format:
+                {
+                  "event_type": "last_trade_price",
+                  "asset_id": "...",
+                  "price": "0.99",
+                  "side": "buy",
+                  "size": "100",
+                  "timestamp": 1678901234567
+                }
+        """
+        if not isinstance(data, dict):
+            logger.debug("Unexpected last_trade_price message format: %s", data)
+            return
+
+        asset_id = data.get("asset_id")
+        if not asset_id:
+            logger.debug("No asset_id in last_trade_price message")
+            return
+
+        slug = self.slug_by_token.get(asset_id)
+        if not slug:
+            logger.debug("Unknown asset_id in last_trade_price: %s", asset_id)
+            return
+
+        try:
+            price = float(data.get("price", 0))
+            size = float(data.get("size", 0))
+            side = data.get("side", "").upper()  # "BUY" or "SELL"
+            timestamp_raw = data.get("timestamp")
+            timestamp_ms = (
+                int(timestamp_raw)
+                if timestamp_raw is not None
+                else int(datetime.utcnow().timestamp() * 1000)
+            )
+        except (ValueError, TypeError) as e:
+            logger.error("Error parsing last_trade_price data: %s – %s", data, e)
+            return
+
+        # Only track trades at price >= 0.99 (endgame sweep territory)
+        if price < 0.99:
+            return
+
+        outcome = self.token_outcomes.get(asset_id, "")
+        is_winning = asset_id == self.winning_tokens.get(slug, "")
+        market_resolved = not self.market_active.get(slug, True)
+
+        # Compute time since last ticker change for this token
+        time_since_ticker_change_ms = -1
+        ticker_changed_recently = False
+        if asset_id in self.last_ticker_change:
+            time_since_ticker_change_ms = timestamp_ms - self.last_ticker_change[asset_id]
+            ticker_changed_recently = time_since_ticker_change_ms <= TICKER_CHANGE_WINDOW_MS
+
+        self.log_unified_event(
+            slug=slug,
+            event_type="last_trade_price",
+            token_id=asset_id,
+            price=price,
+            size=size,
+            side=side,
+            market_resolved=market_resolved,
+        )
+
+        print(
+            f"🔥 SWEEP TRADE: {slug} | {outcome} | "
+            f"price={price} side={side} size={size} "
+            f"winning={is_winning} ticker_recent={ticker_changed_recently}"
+        )
+
     async def subscribe_and_monitor(self):
         """Connect to WebSocket and monitor book updates for all markets."""
         logger.info("Connecting to %s", self.ws_url)
@@ -977,6 +1053,14 @@ class MultiEventMonitor:
                                     if msg_type == "tick_size_change":
                                         print(f"Tick Size Change Event Detected: {data}")  # Print the tick size change message
                                         self.process_ticker_change(data)
+
+                                    # Handle last_trade_price event (actual executed trades)
+                                    if msg_type == "last_trade_price":
+                                        asset_id = data.get("asset_id")
+                                        if asset_id:
+                                            slug = self.slug_by_token.get(asset_id)
+                                            if slug and self.market_active.get(slug, False):
+                                                self.process_last_trade_price(data)
 
                                 except json.JSONDecodeError:
                                     logger.error("Failed to decode message: %s", message)
