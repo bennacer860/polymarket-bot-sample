@@ -28,3 +28,9 @@ When an event's outcome is essentially decided and the market price rises above 
 - **Never allocate more than 1/10 of total position to any single market**
 - Prioritize markets that are about to settle (within a few hours) and have prices above 0.997
 - Shorter time windows mean smaller black swan exposure
+-
+### wallet example
+
+Strategy bet only with 0.99 probability
+https://polymarket.com/@IsraeliCowboy?tab=activity
+https://polymarketanalytics.com/traders/0xb77b6ef359f02192fb077227499f9f853d4870a5#trades
