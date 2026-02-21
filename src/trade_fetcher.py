@@ -148,9 +148,12 @@ def fetch_trades_for_wallet(
             "user": wallet,
             "limit": DEFAULT_LIMIT,
             "offset": offset,
+            "start": start_ts,
+            "end": end_ts,
+            "takerOnly": "false",
         }
 
-        logger.info("Requesting trades: offset=%d, limit=%d", offset, DEFAULT_LIMIT)
+        logger.info("Requesting trades: offset=%d, limit=%d, start=%d, end=%d", offset, DEFAULT_LIMIT, start_ts, end_ts)
         t0 = time.perf_counter()
 
         try:
