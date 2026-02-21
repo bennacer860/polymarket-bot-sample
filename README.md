@@ -6,7 +6,8 @@ A Python bot for Polymarket with multiple modes:
 2. **Trading Bot Mode** – For 15-min crypto Up/Down events: wait for event end, detect winning outcome, place 1 share @ 0.999 limit order on the winning side
 3. **Book Monitor Mode** – Monitor WebSocket orderbook updates and log bids placed at the 0.999 price level
 4. **Multi-Event Monitor Mode** – Monitor multiple event slugs simultaneously via WebSocket
-5. **Continuous 15-Min Monitor Mode** – Automatically track current 15-minute crypto markets
+5. **Continuous Crypto Monitor Mode** – Automatically track current 5-minute or 15-minute crypto markets
+6. **Trade Cross-Referencing** – Match wallet trades against sweeper analysis data
 
 ## Setup
 
@@ -142,20 +143,53 @@ Monitor multiple market events simultaneously with automatic market status track
 python monitor_multi_events.py multi --slugs slug1 slug2 slug3
 ```
 
-**Continuously monitor 15-minute crypto markets:**
+**Continuously monitor crypto markets (5-min or 15-min):**
 
 ```bash
+# 15-minute markets (default)
+python monitor_multi_events.py continuous --markets BTC ETH SOL XRP --duration 15
+
+# 5-minute markets
+python monitor_multi_events.py continuous --markets BTC ETH SOL XRP --duration 5
+
+# Legacy alias (equivalent to --duration 15)
 python monitor_multi_events.py continuous-15min --markets BTC ETH SOL
 ```
 
 Features:
 - Monitor multiple markets simultaneously via a single WebSocket connection
-- Automatic market status tracking - closes WebSocket when all markets end
-- Support for continuous 15-minute market monitoring
-- Automatically generates correct slugs for current 15-minute periods
-- All data saved to CSV for analysis
+- Automatic market status tracking — closes WebSocket when all markets end
+- Flexible `--duration` flag supports 5-minute and 15-minute market windows
+- Automatically generates correct slugs for current market periods and rolls to the next window
+- Records `condition_id` and `raw_slug` for reliable cross-referencing with wallet trades
+- All data saved to a unified CSV (`sweeper_analysis.csv`) for analysis
 
 See `MULTI_EVENT_MONITORING.md` for complete usage examples and documentation.
+
+### Wallet Trade Fetching
+
+Fetch trade history for any Polymarket wallet and export to CSV:
+
+```bash
+python fetch_wallet_trades.py --wallet 0xABC... --start 2026-02-20 --end 2026-02-21 --output wallet_trades.csv
+```
+
+Optional `--min-price 0.95` flag filters for high-price trades (useful for sweep detection).
+
+### Trade Cross-Referencing
+
+Match wallet trades against sweeper analysis data to see which trades the sweeper was monitoring and whether the trader won or lost:
+
+```bash
+python match_trades.py --wallet wallet_trades.csv --sweeper sweeper_analysis.csv --output matched_trades.csv
+```
+
+Matching priority:
+1. **CONDITION_ID** — exact market instance match (most reliable)
+2. **EXACT** — event slug + token ID match
+3. **SLUG-ONLY** — same market time-slot, possibly different day
+
+Both 5-minute and 15-minute markets are included in the cross-reference.
 
 ## Configuration
 

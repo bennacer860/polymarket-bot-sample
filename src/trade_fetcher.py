@@ -9,6 +9,7 @@ import requests
 from pytz import timezone as pytz_timezone
 
 from .logging_config import get_logger
+from .markets.fifteen_min import detect_duration_from_slug, duration_label
 
 logger = get_logger(__name__)
 
@@ -44,12 +45,14 @@ CSV_COLUMNS = [
 
 def format_slug_with_est_time(slug: str, timestamp_ms: Optional[int] = None) -> str:
     """
-    Format event slug with EST time in HH:MM format.
+    Format event slug with EST date and time.
 
-    Converts slugs like "btc-updown-15m-1707523200" to "btc-15min-up-or-down-2026-02-20-16:15".
-    Uses the timestamp from the slug or provided timestamp_ms to get the EST date and time.
+    Converts raw API slugs to human-readable formatted slugs:
+      "btc-updown-15m-1707523200" -> "btc-15min-up-or-down-2026-02-20-16:15"
+      "btc-updown-5m-1707523200"  -> "btc-5min-up-or-down-2026-02-20-16:05"
 
-    Including the date in the slug eliminates ambiguity between same-time different-day markets,
+    The duration (5min/15min) is auto-detected from the raw slug.
+    Including the date eliminates ambiguity between same-time different-day markets,
     which is critical for reliable cross-referencing with sweeper data.
 
     This is a standalone version of MultiEventMonitor._format_slug_with_est_time()
@@ -63,6 +66,10 @@ def format_slug_with_est_time(slug: str, timestamp_ms: Optional[int] = None) -> 
         Formatted slug with EST date+time, e.g. "btc-15min-up-or-down-2026-02-20-16:15"
     """
     slug_lower = slug.lower()
+
+    # Detect duration from raw slug (defaults to 15min if undetectable)
+    detected_dur = detect_duration_from_slug(slug)
+    dur_label = duration_label(detected_dur if detected_dur is not None else 15)
 
     # Detect crypto prefix
     crypto = None
@@ -100,7 +107,7 @@ def format_slug_with_est_time(slug: str, timestamp_ms: Optional[int] = None) -> 
     time_str = dt.strftime("%H:%M")
 
     if crypto:
-        return f"{crypto}-15min-up-or-down-{date_str}-{time_str}"
+        return f"{crypto}-{dur_label}-up-or-down-{date_str}-{time_str}"
 
     # Fallback: strip numeric tail and append date+time
     if parts and parts[-1].isdigit():

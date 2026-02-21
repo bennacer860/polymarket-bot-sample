@@ -1,11 +1,17 @@
-"""Continuous monitor for 15-minute crypto markets."""
+"""Continuous monitor for recurring crypto up/down markets (5-min, 15-min, etc.)."""
 
 import asyncio
 from typing import Optional
 import time
 
 from .multi_event_monitor import MultiEventMonitor
-from ..markets.fifteen_min import get_market_slug, get_current_15m_utc, get_next_15m_utc, MarketSelection, FIFTEEN_MIN_SECONDS
+from ..markets.fifteen_min import (
+    get_market_slug,
+    get_current_interval_utc,
+    get_next_interval_utc,
+    MarketSelection,
+    SUPPORTED_DURATIONS,
+)
 from ..logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -23,29 +29,42 @@ DEFAULT_CONTINUOUS_CHECK_INTERVAL = 30
 DEFAULT_MARKET_STATUS_CHECK_INTERVAL = 60
 
 
-class ContinuousFifteenMinMonitor:
-    """Monitor that continuously tracks current and upcoming 15-minute markets."""
+class ContinuousCryptoMonitor:
+    """Monitor that continuously tracks current and upcoming crypto markets at any duration."""
 
     def __init__(
         self,
         market_selections: list[MarketSelection],
-        output_file: str = "bids_0999.csv",
+        duration_minutes: int = 15,
+        output_file: str | None = None,
         ws_url: Optional[str] = None,
         check_interval: int = DEFAULT_CONTINUOUS_CHECK_INTERVAL,
         market_events_file: str = "market_events.csv",
     ):
         """
-        Initialize the continuous 15-minute monitor.
+        Initialize the continuous crypto market monitor.
 
         Args:
             market_selections: List of crypto assets to monitor (e.g., ["BTC", "ETH"])
+            duration_minutes: Market duration in minutes (5 or 15, default 15)
             output_file: CSV file to save bid data
             ws_url: Optional WebSocket URL override
             check_interval: How often to check for new markets and remove ended ones (seconds)
             market_events_file: CSV file to save market events
+
+        Raises:
+            ValueError: If duration_minutes is not in SUPPORTED_DURATIONS.
         """
+        if duration_minutes not in SUPPORTED_DURATIONS:
+            raise ValueError(
+                f"Unsupported duration: {duration_minutes}m. "
+                f"Supported: {sorted(SUPPORTED_DURATIONS)}"
+            )
+
         self.market_selections = market_selections
-        self.output_file = output_file
+        self.duration_minutes = duration_minutes
+        self.interval_seconds = duration_minutes * 60
+        self.output_file = output_file or f"sweeper_analysis_{duration_minutes}min.csv"
         self.ws_url = ws_url
         self.check_interval = check_interval
         self.market_events_file = market_events_file
@@ -58,12 +77,12 @@ class ContinuousFifteenMinMonitor:
         }
 
     def get_slugs_for_timestamp(self, timestamp: int) -> list[str]:
-        """Get slugs for a specific 15-minute period for all selected markets."""
+        """Get slugs for a specific interval period for all selected markets."""
         slugs = []
         
         for selection in self.market_selections:
             try:
-                slug = get_market_slug(selection, timestamp)
+                slug = get_market_slug(selection, self.duration_minutes, timestamp)
                 slugs.append(slug)
                 logger.debug("Generated slug for %s at %d: %s", selection, timestamp, slug)
             except ValueError as e:
@@ -79,10 +98,10 @@ class ContinuousFifteenMinMonitor:
             if not self.monitor or not self.monitor.running:
                 continue
             
-            logger.debug("Checking for new markets to subscribe and old ones to unsubscribe...")
+            logger.debug("Checking for new %dm markets to subscribe and old ones to unsubscribe...", self.duration_minutes)
             
-            current_timestamp = get_current_15m_utc()
-            next_timestamp = get_next_15m_utc()
+            current_timestamp = get_current_interval_utc(self.duration_minutes)
+            next_timestamp = get_next_interval_utc(self.duration_minutes)
             current_time = int(time.time())
             
             # Collect slugs to add and remove
@@ -93,20 +112,20 @@ class ContinuousFifteenMinMonitor:
                 # Check if we need to add the next market (proactive subscription)
                 if next_timestamp not in self.monitored_timestamps[selection]:
                     try:
-                        slug = get_market_slug(selection, next_timestamp)
+                        slug = get_market_slug(selection, self.duration_minutes, next_timestamp)
                         slugs_to_add.append(slug)
                         self.monitored_timestamps[selection].add(next_timestamp)
-                        logger.info("Will add next market for %s: %s", selection, slug)
+                        logger.info("Will add next %dm market for %s: %s", self.duration_minutes, selection, slug)
                     except ValueError as e:
                         logger.error("Failed to generate next slug for %s: %s", selection, e)
                 
                 # Check if we need to add the current market (if not already added)
                 if current_timestamp not in self.monitored_timestamps[selection]:
                     try:
-                        slug = get_market_slug(selection, current_timestamp)
+                        slug = get_market_slug(selection, self.duration_minutes, current_timestamp)
                         slugs_to_add.append(slug)
                         self.monitored_timestamps[selection].add(current_timestamp)
-                        logger.info("Will add current market for %s: %s", selection, slug)
+                        logger.info("Will add current %dm market for %s: %s", self.duration_minutes, selection, slug)
                     except ValueError as e:
                         logger.error("Failed to generate current slug for %s: %s", selection, e)
                 
@@ -114,15 +133,15 @@ class ContinuousFifteenMinMonitor:
                 timestamps_to_remove = []
                 for timestamp in self.monitored_timestamps[selection]:
                     # Markets that ended more than grace period ago should be removed
-                    market_end_time = timestamp + FIFTEEN_MIN_SECONDS
+                    market_end_time = timestamp + self.interval_seconds
                     if current_time > market_end_time + GRACE_PERIOD_SECONDS:
                         try:
-                            slug = get_market_slug(selection, timestamp)
+                            slug = get_market_slug(selection, self.duration_minutes, timestamp)
                             # Check if this market is actually inactive
                             if slug in self.monitor.market_active and not self.monitor.market_active[slug]:
                                 slugs_to_remove.append(slug)
                                 timestamps_to_remove.append(timestamp)
-                                logger.info("Will remove ended market for %s: %s", selection, slug)
+                                logger.info("Will remove ended %dm market for %s: %s", self.duration_minutes, selection, slug)
                         except ValueError as e:
                             logger.error("Failed to generate slug for removal %s: %s", selection, e)
                 
@@ -141,15 +160,16 @@ class ContinuousFifteenMinMonitor:
     async def run(self):
         """Run the continuous monitor."""
         logger.info(
-            "Starting continuous 15-minute monitor for: %s",
+            "Starting continuous %d-minute monitor for: %s",
+            self.duration_minutes,
             ", ".join(self.market_selections),
         )
         
         self.running = True
         
         # Get slugs for current AND next periods
-        current_timestamp = get_current_15m_utc()
-        next_timestamp = get_next_15m_utc()
+        current_timestamp = get_current_interval_utc(self.duration_minutes)
+        next_timestamp = get_next_interval_utc(self.duration_minutes)
         
         initial_slugs = []
         
@@ -169,7 +189,11 @@ class ContinuousFifteenMinMonitor:
             logger.error("No valid slugs generated. Cannot start monitoring.")
             return
         
-        logger.info("Initial monitoring setup for current and next 15-minute markets: %s", ", ".join(initial_slugs))
+        logger.info(
+            "Initial monitoring setup for current and next %d-minute markets: %s",
+            self.duration_minutes,
+            ", ".join(initial_slugs),
+        )
         
         # Create monitor that will run continuously
         self.monitor = MultiEventMonitor(
@@ -205,3 +229,7 @@ class ContinuousFifteenMinMonitor:
         except KeyboardInterrupt:
             logger.info("Continuous monitor stopped by user")
             self.running = False
+
+
+# Backward-compatibility alias
+ContinuousFifteenMinMonitor = ContinuousCryptoMonitor

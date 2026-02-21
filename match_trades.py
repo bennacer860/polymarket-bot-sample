@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-reference wallet trades (15min markets) with sweeper_analysis.csv.
+"""Cross-reference wallet trades (5min / 15min markets) with sweeper_analysis.csv.
 
 Matching priority:
   1. condition_id  — exact market instance match (best, requires updated sweeper CSV)
@@ -39,10 +39,10 @@ def normalise_slug(slug: str) -> str:
     """
     Normalise a slug so old-format (no date) and new-format (with date) can still match.
     
-    Old:  btc-15min-up-or-down-20:15
-    New:  btc-15min-up-or-down-2026-02-20-20:15
+    Old:  btc-15min-up-or-down-20:15      / btc-5min-up-or-down-20:05
+    New:  btc-15min-up-or-down-2026-02-20-20:15  / btc-5min-up-or-down-2026-02-20-20:05
     
-    Returns the time-slot portion:  btc-15min-up-or-down-20:15
+    Returns the time-slot portion without the embedded date.
     """
     # Strip an embedded date like 2026-02-20- from the slug
     return re.sub(r'-\d{4}-\d{2}-\d{2}(-\d{2}:\d{2})$', r'\1', slug)
@@ -54,7 +54,8 @@ def load_wallet_trades(path: str) -> list[dict]:
     trades = []
     with open(path, newline="") as f:
         for row in csv.DictReader(f):
-            if "15min" in row.get("event_slug", ""):
+            slug = row.get("event_slug", "")
+            if "5min-up-or-down" in slug or "15min-up-or-down" in slug:
                 trades.append(row)
     return trades
 
@@ -173,12 +174,12 @@ def main():
     parser = argparse.ArgumentParser(description="Cross-reference wallet trades with sweeper data")
     parser.add_argument("--wallet", default="wallet_trades.csv", help="Wallet trades CSV")
     parser.add_argument("--sweeper", default="sweeper_analysis.csv", help="Sweeper analysis CSV")
-    parser.add_argument("--output", default="matched_15min_trades.csv", help="Output CSV")
+    parser.add_argument("--output", default="matched_trades.csv", help="Output CSV")
     args = parser.parse_args()
 
     print("Loading wallet trades …")
     all_trades = load_wallet_trades(args.wallet)
-    print(f"  → {len(all_trades)} individual fills on 15-min markets")
+    print(f"  → {len(all_trades)} individual fills on 5/15-min markets")
     positions = aggregate_positions(all_trades)
     print(f"  → {len(positions)} aggregated positions\n")
 
@@ -290,7 +291,7 @@ def main():
     if no_match > 0:
         print(f"\n  ⚠  {no_match} positions had NO sweeper data.")
         print("     This means the sweeper was not running during those market windows.")
-        print("     Ensure the sweeper runs continuously with: python monitor_multi_events.py continuous-15min --markets BTC ETH SOL XRP")
+        print("     Ensure the sweeper runs continuously with: python monitor_multi_events.py continuous --markets BTC ETH SOL XRP --duration 15")
 
     if csv_rows:
         with open(args.output, "w", newline="") as f:

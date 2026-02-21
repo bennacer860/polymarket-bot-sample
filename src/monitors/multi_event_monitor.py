@@ -18,6 +18,7 @@ from ..gamma_client import (
     get_outcomes,
 )
 from ..logging_config import get_logger
+from ..markets.fifteen_min import detect_duration_from_slug, duration_label
 
 logger = get_logger(__name__)
 
@@ -461,7 +462,11 @@ class MultiEventMonitor:
         """
         Format event slug with EST date and time.
         
-        Converts slugs like "btc-updown-15m-1707523200" to "btc-15min-up-or-down-2026-02-20-16:15".
+        Converts raw API slugs to human-readable formatted slugs:
+          "btc-updown-15m-1707523200" -> "btc-15min-up-or-down-2026-02-20-16:15"
+          "btc-updown-5m-1707523200"  -> "btc-5min-up-or-down-2026-02-20-16:05"
+        
+        The duration (5min/15min) is auto-detected from the raw slug.
         Including the date eliminates ambiguity between same-time different-day markets,
         which is critical for reliable cross-referencing with wallet trade data.
         
@@ -474,6 +479,10 @@ class MultiEventMonitor:
         """
         # Convert slug to lowercase for processing
         slug_lower = slug.lower()
+        
+        # Detect duration from slug (defaults to 15min if undetectable)
+        detected_dur = detect_duration_from_slug(slug)
+        dur_label = duration_label(detected_dur if detected_dur is not None else 15)
         
         # Crypto name mapping
         crypto_map = {
@@ -520,10 +529,10 @@ class MultiEventMonitor:
         date_str = dt.strftime("%Y-%m-%d")
         time_str = dt.strftime("%H:%M")
         
-        # Format: {crypto}-15min-up-or-down-{YYYY-MM-DD}-{HH:MM}
+        # Format: {crypto}-{dur_label}-up-or-down-{YYYY-MM-DD}-{HH:MM}
         # Including the date eliminates ambiguity between same-time different-day markets
         if crypto:
-            return f"{crypto}-15min-up-or-down-{date_str}-{time_str}"
+            return f"{crypto}-{dur_label}-up-or-down-{date_str}-{time_str}"
         
         # Fallback: if no crypto found, try to preserve original format with date+time
         # Remove timestamp from end if present
