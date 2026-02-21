@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
-"""Cross-reference wallet trades (5min / 15min markets) with sweeper_analysis.csv.
+"""Cross-reference wallet trades (5min / 15min markets) with sweeper analysis CSVs.
 
 Matching priority:
   1. condition_id  — exact market instance match (best, requires updated sweeper CSV)
   2. event_slug + token_id  — exact token match (works with old or new CSV format)
   3. event_slug only  — same market time-slot, possibly different day (pattern info only)
 
+Sweeper file auto-discovery:
+  When --sweeper is not provided, the script automatically finds and merges all
+  sweeper_analysis*.csv files in the current directory (e.g. sweeper_analysis_5min.csv,
+  sweeper_analysis_15min.csv, sweeper_analysis.csv).
+
 Usage:
     python3 match_trades.py
+    python3 match_trades.py --sweeper sweeper_analysis_15min.csv
+    python3 match_trades.py --sweeper sweeper_analysis_5min.csv sweeper_analysis_15min.csv
     python3 match_trades.py --wallet wallet_trades.csv --sweeper sweeper_analysis.csv
 """
 
 import argparse
 import csv
+import glob
+import os
 import re
 import sys
 from collections import defaultdict
@@ -60,10 +69,36 @@ def load_wallet_trades(path: str) -> list[dict]:
     return trades
 
 
-def load_sweeper(path: str) -> list[dict]:
-    with open(path, newline="") as f:
-        clean_lines = [l for l in f if not is_conflict_line(l)]
-    return list(csv.DictReader(clean_lines))
+def discover_sweeper_files() -> list[str]:
+    """Auto-discover sweeper analysis CSV files in the current directory.
+
+    Looks for files matching sweeper_analysis*.csv (e.g. sweeper_analysis.csv,
+    sweeper_analysis_5min.csv, sweeper_analysis_15min.csv).
+
+    Returns:
+        Sorted list of matching file paths.
+    """
+    pattern = "sweeper_analysis*.csv"
+    matches = sorted(glob.glob(pattern))
+    return matches
+
+
+def load_sweeper(paths: list[str]) -> list[dict]:
+    """Load and merge sweeper rows from one or more CSV files.
+
+    Args:
+        paths: List of sweeper CSV file paths to load and merge.
+
+    Returns:
+        Combined list of row dicts from all files.
+    """
+    all_rows: list[dict] = []
+    for path in paths:
+        with open(path, newline="") as f:
+            clean_lines = [line for line in f if not is_conflict_line(line)]
+        rows = list(csv.DictReader(clean_lines))
+        all_rows.extend(rows)
+    return all_rows
 
 
 # ── aggregate wallet fills → positions ───────────────────────────────────────
@@ -173,7 +208,12 @@ def sweeper_summary(events: list[dict], trade_ts_sec: int, window_sec: int = 300
 def main():
     parser = argparse.ArgumentParser(description="Cross-reference wallet trades with sweeper data")
     parser.add_argument("--wallet", default="wallet_trades.csv", help="Wallet trades CSV")
-    parser.add_argument("--sweeper", default="sweeper_analysis.csv", help="Sweeper analysis CSV")
+    parser.add_argument(
+        "--sweeper",
+        nargs="*",
+        default=None,
+        help="Sweeper analysis CSV file(s). If omitted, auto-discovers all sweeper_analysis*.csv files.",
+    )
     parser.add_argument("--output", default="matched_trades.csv", help="Output CSV")
     args = parser.parse_args()
 
@@ -183,9 +223,21 @@ def main():
     positions = aggregate_positions(all_trades)
     print(f"  → {len(positions)} aggregated positions\n")
 
+    # Resolve sweeper files: explicit args or auto-discover
+    if args.sweeper:
+        sweeper_paths = args.sweeper
+    else:
+        sweeper_paths = discover_sweeper_files()
+        if not sweeper_paths:
+            print("Error: No sweeper_analysis*.csv files found in the current directory.")
+            print("       Run the sweeper first, or pass --sweeper <file> explicitly.")
+            return 1
+
     print("Loading sweeper analysis …")
-    sweeper_rows = load_sweeper(args.sweeper)
-    print(f"  → {len(sweeper_rows)} sweeper rows loaded")
+    for sp in sweeper_paths:
+        print(f"  • {sp}")
+    sweeper_rows = load_sweeper(sweeper_paths)
+    print(f"  → {len(sweeper_rows)} sweeper rows loaded (from {len(sweeper_paths)} file(s))")
 
     # Detect whether sweeper CSV has the new condition_id column
     has_condition_id = any(r.get("condition_id") for r in sweeper_rows[:100])
