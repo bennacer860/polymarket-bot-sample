@@ -111,19 +111,16 @@ class MultiEventMonitor:
         if self.csv_file.tell() == 0:
             self.csv_writer.writerow([
                 "event_slug",              # Formatted slug with EST date+time (e.g., "btc-15min-up-or-down-2026-02-20-16:15")
-                "raw_slug",                # Original API slug (e.g., "btc-updown-15m-1771550145") for reliable joins
-                "condition_id",            # Market condition ID — primary key for cross-referencing wallet trades
                 "timestamp_ms",
                 "timestamp_iso",
                 "timestamp_est",
-                "event_type",              # "bid", "ask", "tick_size_change", "market_resolved", "market_open", "error"
-                "price",                   # For bids/asks only, empty for other events
-                "size",                    # For bids/asks only, empty for other events
+                "event_type",              # "bid", "ask", "last_trade_price", "tick_size_change", "market_resolved", "market_open", "error"
+                "price",                   # For bids/asks/last_trade_price
+                "size",                    # For bids/asks/last_trade_price
                 "size_change",             # For bids/asks only, empty for other events
-                "side",                    # "BID" or "ASK" (for bids/asks only)
+                "side",                    # "BID" or "ASK" or "BUY" or "SELL"
                 "best_bid",                # Best bid at time of event
                 "best_ask",                # Best ask at time of event
-                "token_id",
                 "is_winning_token",        # True if this is the winning token (for bids/asks after resolution)
                 "outcome",                 # Outcome label (e.g., "Up", "Down", "Yes", "No")
                 "time_since_ticker_change_ms",  # Milliseconds since last tick_size_change
@@ -131,7 +128,11 @@ class MultiEventMonitor:
                 "old_tick_size",           # For tick_size_change events
                 "new_tick_size",           # For tick_size_change events
                 "market_resolved",          # True if market has resolved
-                "error_message"            # For error events
+                "error_message",           # For error events
+                # --- Long-value columns at the end for readability ---
+                "raw_slug",                # Original API slug (e.g., "btc-updown-15m-1771550145") for reliable joins
+                "condition_id",            # Market condition ID — primary key for cross-referencing wallet trades
+                "token_id",                # Token ID (long hex string)
             ])
             self.csv_file.flush()
         logger.info("Unified CSV output initialized (append mode): %s", self.output_file)
@@ -633,20 +634,17 @@ class MultiEventMonitor:
                         raw_slug = self.raw_slugs.get(slug, slug)
                         
                         self.csv_writer.writerow([
-                            formatted_slug,
-                            raw_slug,
-                            condition_id,
+                            formatted_slug,      # event_slug
                             event_timestamp_ms,
                             timestamp_iso,
                             timestamp_est,
-                            side.lower(),
+                            side.lower(),         # event_type (bid/ask)
                             price,
                             size,
                             size_change,
-                            side.upper(),
+                            side.upper(),         # side
                             best_bid,
                             best_ask,
-                            asset_id,
                             str(is_winning_token).lower(),
                             outcome,
                             time_since_ticker_change_ms,
@@ -654,7 +652,11 @@ class MultiEventMonitor:
                             old_tick_size,
                             new_tick_size,
                             str(market_resolved).lower(),
-                            error_message
+                            error_message,
+                            # --- Long-value columns ---
+                            raw_slug,
+                            condition_id,
+                            asset_id,             # token_id
                         ])
                         self.csv_file.flush()
                     except Exception as e:
@@ -808,12 +810,10 @@ class MultiEventMonitor:
             condition_id_val = self.condition_ids.get(slug, "")
         raw_slug = self.raw_slugs.get(slug, slug)
         
-        # Write to unified CSV
+        # Write to unified CSV (long-value columns at the end for readability)
         if self.csv_writer:
             self.csv_writer.writerow([
-                formatted_slug,  # event_slug (first column, formatted with EST date+time)
-                raw_slug,        # Original API slug for reliable joins
-                condition_id_val,  # condition_id for cross-referencing wallet trades
+                formatted_slug,  # event_slug
                 timestamp_ms,
                 timestamp_iso,
                 timestamp_est,
@@ -824,15 +824,18 @@ class MultiEventMonitor:
                 side if side else "",
                 best_bid if best_bid and best_bid != "N/A" else "",
                 best_ask if best_ask and best_ask != "N/A" else "",
-                token_id if token_id else "",
-                str(is_winning_token).lower() if token_id else "",  # Convert boolean to string
+                str(is_winning_token).lower() if token_id else "",
                 outcome if outcome else "",
                 time_since_ticker_change_ms if time_since_ticker_change_ms >= 0 else "",
-                str(ticker_changed_recently).lower() if token_id else "",  # Convert boolean to string
+                str(ticker_changed_recently).lower() if token_id else "",
                 old_tick_size if old_tick_size else "",
                 new_tick_size if new_tick_size else "",
-                str(market_resolved).lower(),  # Convert boolean to string
-                error_message if error_message else ""
+                str(market_resolved).lower(),
+                error_message if error_message else "",
+                # --- Long-value columns ---
+                raw_slug,        # Original API slug for reliable joins
+                condition_id_val,  # condition_id for cross-referencing wallet trades
+                token_id if token_id else "",
             ])
             self.csv_file.flush()
             logger.debug("Event saved to unified CSV: %s", self.output_file)
@@ -911,6 +914,62 @@ class MultiEventMonitor:
             token_id=asset_id,
             old_tick_size=str(data.get("old_tick_size", "")),
             new_tick_size=str(data.get("new_tick_size", "")),
+            market_resolved=market_resolved,
+        )
+
+    def process_last_trade_price(self, data: dict[str, Any]):
+        """
+        Process a last_trade_price event from the WebSocket.
+
+        This captures the most recent trade executed on the market, including
+        the price, size, and side (BUY/SELL).  Tracking these events lets us
+        correlate sweeper order-book activity with actual fills and determine
+        whether a tracked wallet's trade was a winning position.
+
+        Args:
+            data: WebSocket message data for last_trade_price event
+        """
+        if not isinstance(data, dict):
+            logger.debug("Unexpected last_trade_price message format: %s", data)
+            return
+
+        asset_id = data.get("asset_id")
+        if not asset_id:
+            logger.debug("No asset_id in last_trade_price message")
+            return
+
+        slug = self.slug_by_token.get(asset_id)
+        if not slug:
+            logger.debug("Unknown asset_id in last_trade_price: %s", asset_id)
+            return
+
+        # Only log for active markets
+        if not self.market_active.get(slug, False):
+            logger.debug("Ignoring last_trade_price for inactive market: %s", slug)
+            return
+
+        price_raw = data.get("price")
+        size_raw = data.get("size")
+        side = str(data.get("side", "")).upper()  # "BUY" or "SELL"
+
+        try:
+            price = float(price_raw) if price_raw is not None else None
+        except (ValueError, TypeError):
+            price = None
+
+        try:
+            size = float(size_raw) if size_raw is not None else None
+        except (ValueError, TypeError):
+            size = None
+
+        market_resolved = not self.market_active.get(slug, True)
+        self.log_unified_event(
+            slug=slug,
+            event_type="last_trade_price",
+            token_id=asset_id,
+            price=price,
+            size=size,
+            side=side,
             market_resolved=market_resolved,
         )
 
@@ -1023,6 +1082,13 @@ class MultiEventMonitor:
                                     if msg_type == "tick_size_change":
                                         print(f"Tick Size Change Event Detected: {data}")  # Print the tick size change message
                                         self.process_ticker_change(data)
+
+                                    # Handle last_trade_price event
+                                    if msg_type == "last_trade_price":
+                                        asset_id = data.get("asset_id", "")
+                                        slug = self.slug_by_token.get(asset_id, "unknown")
+                                        print(f"Last Trade Price: {data.get('price')} size={data.get('size')} side={data.get('side')} market={slug}")
+                                        self.process_last_trade_price(data)
 
                                 except json.JSONDecodeError:
                                     logger.error("Failed to decode message: %s", message)
