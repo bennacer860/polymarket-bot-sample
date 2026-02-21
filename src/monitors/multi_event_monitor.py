@@ -80,6 +80,11 @@ class MultiEventMonitor:
         self.market_active: dict[str, bool] = {}  # slug -> is_active
         self.slug_by_token: dict[str, str] = {}  # token_id -> slug
         
+        # Track condition IDs for cross-referencing with wallet trades
+        self.condition_ids: dict[str, str] = {}  # slug -> condition_id
+        self.condition_by_token: dict[str, str] = {}  # token_id -> condition_id
+        self.raw_slugs: dict[str, str] = {}  # formatted_slug -> raw_slug (preserves timestamp)
+        
         # Track bid/ask data
         self.previous_sizes = {}  # Track previous sizes at each price level and side
         
@@ -104,7 +109,9 @@ class MultiEventMonitor:
         # Check if the file is empty to write headers
         if self.csv_file.tell() == 0:
             self.csv_writer.writerow([
-                "event_slug",              # Formatted slug with EST time (e.g., "btc-15min-up-or-down-16:15")
+                "event_slug",              # Formatted slug with EST date+time (e.g., "btc-15min-up-or-down-2026-02-20-16:15")
+                "raw_slug",                # Original API slug (e.g., "btc-updown-15m-1771550145") for reliable joins
+                "condition_id",            # Market condition ID — primary key for cross-referencing wallet trades
                 "timestamp_ms",
                 "timestamp_iso",
                 "timestamp_est",
@@ -163,13 +170,26 @@ class MultiEventMonitor:
                 logger.error("No token IDs found for slug: %s", slug)
                 return []
             
+            # Extract and store condition_id for cross-referencing with wallet trades
+            condition_id = market.get("conditionId", market.get("condition_id", ""))
+            if condition_id:
+                self.condition_ids[slug] = condition_id
+                for token_id in token_ids:
+                    self.condition_by_token[token_id] = condition_id
+                logger.info("Stored condition_id for %s: %s", slug, condition_id)
+            else:
+                logger.warning("No condition_id found for slug: %s", slug)
+            
+            # Store raw slug for later CSV output
+            self.raw_slugs[slug] = slug
+            
             # Track outcomes for each token
             for i, token_id in enumerate(token_ids):
                 if i < len(outcomes):
                     self.token_outcomes[token_id] = outcomes[i]
             
-            logger.info("Found %d token IDs for slug %s: %s (outcomes: %s)", 
-                       len(token_ids), slug, token_ids, outcomes)
+            logger.info("Found %d token IDs for slug %s: %s (outcomes: %s, condition_id: %s)", 
+                       len(token_ids), slug, token_ids, outcomes, condition_id)
             return token_ids
             
         except Exception as e:
@@ -439,17 +459,18 @@ class MultiEventMonitor:
     
     def _format_slug_with_est_time(self, slug: str, timestamp_ms: Optional[int] = None) -> str:
         """
-        Format event slug with EST time in HH:MM format.
+        Format event slug with EST date and time.
         
-        Converts slugs like "btc-updown-15m-1707523200" to "btc-15min-up-or-down-16:15"
-        Uses the timestamp from the slug or provided timestamp_ms to get the EST time.
+        Converts slugs like "btc-updown-15m-1707523200" to "btc-15min-up-or-down-2026-02-20-16:15".
+        Including the date eliminates ambiguity between same-time different-day markets,
+        which is critical for reliable cross-referencing with wallet trade data.
         
         Args:
             slug: Original event slug
             timestamp_ms: Optional timestamp in milliseconds (if None, uses current time)
             
         Returns:
-            Formatted slug with EST time, e.g., "btc-15min-up-or-down-16:15"
+            Formatted slug with EST date+time, e.g., "btc-15min-up-or-down-2026-02-20-16:15"
         """
         # Convert slug to lowercase for processing
         slug_lower = slug.lower()
@@ -496,20 +517,22 @@ class MultiEventMonitor:
             # Fallback to UTC if timestamp conversion fails
             dt = datetime.fromtimestamp(timestamp, tz=pytz_timezone("UTC")).astimezone(est_timezone)
         
+        date_str = dt.strftime("%Y-%m-%d")
         time_str = dt.strftime("%H:%M")
         
-        # Format as requested: {crypto}-15min-up-or-down-{HH:MM}
+        # Format: {crypto}-15min-up-or-down-{YYYY-MM-DD}-{HH:MM}
+        # Including the date eliminates ambiguity between same-time different-day markets
         if crypto:
-            return f"{crypto}-15min-up-or-down-{time_str}"
+            return f"{crypto}-15min-up-or-down-{date_str}-{time_str}"
         
-        # Fallback: if no crypto found, try to preserve original format with time
+        # Fallback: if no crypto found, try to preserve original format with date+time
         # Remove timestamp from end if present
         if parts and parts[-1].isdigit():
             prefix = "-".join(parts[:-1])
         else:
             prefix = slug
         
-        return f"{prefix}-{time_str}"
+        return f"{prefix}-{date_str}-{time_str}"
 
     def _process_order_at_target_price(
         self,
@@ -596,8 +619,14 @@ class MultiEventMonitor:
                         new_tick_size = ""
                         error_message = ""
                         
+                        # Look up condition_id and raw slug for cross-referencing
+                        condition_id = self.condition_by_token.get(asset_id, "")
+                        raw_slug = self.raw_slugs.get(slug, slug)
+                        
                         self.csv_writer.writerow([
                             formatted_slug,
+                            raw_slug,
+                            condition_id,
                             event_timestamp_ms,
                             timestamp_iso,
                             timestamp_est,
@@ -764,10 +793,18 @@ class MultiEventMonitor:
         # Format slug with EST time using the current timestamp
         formatted_slug = self._format_slug_with_est_time(slug, timestamp_ms)
         
+        # Look up condition_id and raw slug for cross-referencing
+        condition_id_val = self.condition_by_token.get(token_id, "") if token_id else ""
+        if not condition_id_val:
+            condition_id_val = self.condition_ids.get(slug, "")
+        raw_slug = self.raw_slugs.get(slug, slug)
+        
         # Write to unified CSV
         if self.csv_writer:
             self.csv_writer.writerow([
-                formatted_slug,  # event_slug (first column, formatted with EST time)
+                formatted_slug,  # event_slug (first column, formatted with EST date+time)
+                raw_slug,        # Original API slug for reliable joins
+                condition_id_val,  # condition_id for cross-referencing wallet trades
                 timestamp_ms,
                 timestamp_iso,
                 timestamp_est,

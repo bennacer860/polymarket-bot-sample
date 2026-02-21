@@ -46,8 +46,11 @@ def format_slug_with_est_time(slug: str, timestamp_ms: Optional[int] = None) -> 
     """
     Format event slug with EST time in HH:MM format.
 
-    Converts slugs like "btc-updown-15m-1707523200" to "btc-15min-up-or-down-16:15".
-    Uses the timestamp from the slug or provided timestamp_ms to get the EST time.
+    Converts slugs like "btc-updown-15m-1707523200" to "btc-15min-up-or-down-2026-02-20-16:15".
+    Uses the timestamp from the slug or provided timestamp_ms to get the EST date and time.
+
+    Including the date in the slug eliminates ambiguity between same-time different-day markets,
+    which is critical for reliable cross-referencing with sweeper data.
 
     This is a standalone version of MultiEventMonitor._format_slug_with_est_time()
     so both the monitor and trade fetcher produce identical event_slug values.
@@ -57,7 +60,7 @@ def format_slug_with_est_time(slug: str, timestamp_ms: Optional[int] = None) -> 
         timestamp_ms: Optional timestamp in milliseconds (fallback if slug has no timestamp)
 
     Returns:
-        Formatted slug with EST time, e.g. "btc-15min-up-or-down-16:15"
+        Formatted slug with EST date+time, e.g. "btc-15min-up-or-down-2026-02-20-16:15"
     """
     slug_lower = slug.lower()
 
@@ -93,18 +96,19 @@ def format_slug_with_est_time(slug: str, timestamp_ms: Optional[int] = None) -> 
             timestamp, tz=pytz_timezone("UTC")
         ).astimezone(est_tz)
 
+    date_str = dt.strftime("%Y-%m-%d")
     time_str = dt.strftime("%H:%M")
 
     if crypto:
-        return f"{crypto}-15min-up-or-down-{time_str}"
+        return f"{crypto}-15min-up-or-down-{date_str}-{time_str}"
 
-    # Fallback: strip numeric tail and append time
+    # Fallback: strip numeric tail and append date+time
     if parts and parts[-1].isdigit():
         prefix = "-".join(parts[:-1])
     else:
         prefix = slug
 
-    return f"{prefix}-{time_str}"
+    return f"{prefix}-{date_str}-{time_str}"
 
 
 def fetch_trades_for_wallet(
