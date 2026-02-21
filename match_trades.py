@@ -62,9 +62,11 @@ def normalise_slug(slug: str) -> str:
 def load_wallet_trades(path: str) -> list[dict]:
     trades = []
     with open(path, newline="") as f:
-        for row in csv.DictReader(f):
+        for row_num, row in enumerate(csv.DictReader(f), start=2):  # row 1 = header
             slug = row.get("event_slug", "")
             if "5min-up-or-down" in slug or "15min-up-or-down" in slug:
+                row["_source_file"] = path
+                row["_source_row"] = row_num
                 trades.append(row)
     return trades
 
@@ -95,8 +97,20 @@ def load_sweeper(paths: list[str]) -> list[dict]:
     all_rows: list[dict] = []
     for path in paths:
         with open(path, newline="") as f:
-            clean_lines = [line for line in f if not is_conflict_line(line)]
+            raw_lines = list(f)
+        # Track original line numbers before stripping conflict markers
+        clean_pairs: list[tuple[int, str]] = []
+        for i, line in enumerate(raw_lines):
+            if not is_conflict_line(line):
+                clean_pairs.append((i + 1, line))  # 1-based line number
+        # First clean line is the header; data rows start after that
+        header_line = clean_pairs[0][1] if clean_pairs else ""
+        clean_lines = [header_line] + [line for _, line in clean_pairs[1:]]
+        orig_row_nums = [num for num, _ in clean_pairs[1:]]  # line numbers for data rows
         rows = list(csv.DictReader(clean_lines))
+        for row, orig_num in zip(rows, orig_row_nums):
+            row["_source_file"] = path
+            row["_source_row"] = orig_num
         all_rows.extend(rows)
     return all_rows
 
@@ -121,11 +135,14 @@ def aggregate_positions(trades: list[dict]) -> list[dict]:
                 "first_ts": int(t["timestamp"]),
                 "last_ts": int(t["timestamp"]),
                 "condition_id": t["condition_id"],
+                "wallet_source_file": t.get("_source_file", ""),
+                "wallet_source_rows": [],
             }
         pos = key_map[key]
         pos["total_size"] += float(t["size"])
         pos["total_usdc"] += float(t["usdc_value"])
         pos["num_fills"] += 1
+        pos["wallet_source_rows"].append(t.get("_source_row", ""))
         ts = int(t["timestamp"])
         pos["first_ts"] = min(pos["first_ts"], ts)
         pos["last_ts"] = max(pos["last_ts"], ts)
@@ -154,6 +171,121 @@ def build_indices(sweeper_rows: list[dict]):
             by_condition[cond].append(row)
 
     return by_condition, by_token, by_slug
+
+
+# ── last_trade_price matching ────────────────────────────────────────────────
+
+def build_ltp_index(sweeper_rows: list[dict]) -> dict[str, list[dict]]:
+    """Build an index of last_trade_price events keyed by token_id.
+
+    Returns:
+        Dict mapping token_id -> list of LTP event rows (sorted by timestamp).
+    """
+    ltp_by_token: dict[str, list[dict]] = defaultdict(list)
+    for row in sweeper_rows:
+        if row.get("event_type") == "last_trade_price":
+            token = row.get("token_id", "")
+            if token:
+                ltp_by_token[token].append(row)
+    # Sort each token's events by timestamp for efficient proximity search
+    for token in ltp_by_token:
+        ltp_by_token[token].sort(key=lambda r: int(r.get("timestamp_ms", 0)))
+    return dict(ltp_by_token)
+
+
+def ltp_summary(
+    ltp_events: list[dict],
+    trade_ts_sec: int,
+    trade_price: float,
+    trade_size: float,
+    window_sec: int = 60,
+) -> dict:
+    """Analyse last_trade_price events for a wallet position.
+
+    Matches by token_id (already filtered), then by timestamp proximity.
+    Also checks for price/size confirmation of the wallet's exact fill.
+
+    Args:
+        ltp_events: LTP events for this token_id (sorted by timestamp).
+        trade_ts_sec: Wallet trade timestamp in seconds.
+        trade_price: Wallet trade price.
+        trade_size: Wallet total position size.
+        window_sec: Time window in seconds for "nearby" classification (default ±60s).
+
+    Returns:
+        Dict with LTP match statistics.
+    """
+    trade_ts_ms = trade_ts_sec * 1000
+    window_ms = window_sec * 1000
+
+    total = len(ltp_events)
+    nearby: list[dict] = []
+    closest_event: dict | None = None
+    closest_delta_ms: int | None = None
+
+    for e in ltp_events:
+        try:
+            ets = int(e.get("timestamp_ms", 0))
+        except (ValueError, TypeError):
+            continue
+        delta = abs(ets - trade_ts_ms)
+        if delta <= window_ms:
+            nearby.append(e)
+        if closest_delta_ms is None or delta < closest_delta_ms:
+            closest_delta_ms = delta
+            closest_event = e
+
+    # Check for price/size confirmation among nearby events
+    price_match = False
+    size_match = False
+    confirmed_event: dict | None = None
+    for e in nearby:
+        try:
+            ep = float(e.get("price", 0))
+            es = float(e.get("size", 0))
+        except (ValueError, TypeError):
+            continue
+        p_match = abs(ep - trade_price) < 0.002  # within 0.2 cents
+        s_match = abs(es - trade_size) < 0.1      # within 0.1 tokens
+        if p_match:
+            price_match = True
+        if s_match:
+            size_match = True
+        if p_match and s_match and confirmed_event is None:
+            confirmed_event = e
+
+    # Nearest event details
+    nearest_price = ""
+    nearest_size = ""
+    nearest_side = ""
+    nearest_ts_est = ""
+    nearest_delta_sec = ""
+    nearest_source_file = ""
+    nearest_source_row = ""
+    if closest_event:
+        nearest_price = closest_event.get("price", "")
+        nearest_size = closest_event.get("size", "")
+        nearest_side = closest_event.get("side", "")
+        nearest_ts_est = closest_event.get("timestamp_est", "")
+        nearest_source_file = closest_event.get("_source_file", "")
+        nearest_source_row = closest_event.get("_source_row", "")
+        if closest_delta_ms is not None:
+            nearest_delta_sec = f"{closest_delta_ms / 1000:.1f}"
+
+    return {
+        "ltp_total": total,
+        "ltp_nearby": len(nearby),
+        "ltp_nearest_price": nearest_price,
+        "ltp_nearest_size": nearest_size,
+        "ltp_nearest_side": nearest_side,
+        "ltp_nearest_time": nearest_ts_est,
+        "ltp_nearest_delta_sec": nearest_delta_sec,
+        "ltp_nearest_source_file": nearest_source_file,
+        "ltp_nearest_source_row": nearest_source_row,
+        "ltp_price_match": price_match,
+        "ltp_size_match": size_match,
+        "ltp_confirmed": confirmed_event is not None,
+    }
 
 
 def sweeper_summary(events: list[dict], trade_ts_sec: int, window_sec: int = 300) -> dict:
@@ -247,11 +379,19 @@ def main():
 
     by_condition, by_token, by_slug = build_indices(sweeper_rows)
 
+    # Build last_trade_price index by token_id
+    ltp_index = build_ltp_index(sweeper_rows)
+    ltp_token_count = len(ltp_index)
+    ltp_event_count = sum(len(v) for v in ltp_index.values())
+    print(f"  → {ltp_event_count} last_trade_price events across {ltp_token_count} tokens\n")
+
     # Counters
     cond_matches = 0
     exact_matches = 0
     slug_only_matches = 0
     no_match = 0
+    ltp_matched = 0
+    ltp_confirmed = 0
 
     csv_rows = []
 
@@ -300,17 +440,44 @@ def main():
                 sw_dates.add(d)
         sw_date_str = ", ".join(sorted(sw_dates)) if sw_dates else "—"
 
-        print("─" * 95)
-        print(f"  Market:     {pos['event_slug']}")
-        print(f"  Outcome:    {pos['outcome']}  |  Side: {pos['side']}  |  Price: {pos['price']}")
-        print(f"  Size:       {pos['total_size']:,.2f} tokens  |  USDC: ${pos['total_usdc']:,.2f}  |  Fills: {pos['num_fills']}")
-        print(f"  Trade time: {ts_sec_to_est(pos['first_ts'])} → {ts_sec_to_est(pos['last_ts'])} EST")
-        print(f"  Cond. ID:   {cond_id[:42]}…" if len(cond_id) > 42 else f"  Cond. ID:   {cond_id}")
-        print(f"  Match:      {match_level}  ({ctx['total']} sweeper events, {ctx['nearby']} within ±5 min)")
-        print(f"  Sweeper dates: {sw_date_str}")
-        if match_level != "NONE":
-            print(f"  Bid/Ask:    {ctx['best_bid']} / {ctx['best_ask']}")
-            print(f"  Result:     {win_str}")
+        # ── Last-trade-price matching (token_id + timestamp) ──
+        ltp_events = ltp_index.get(token, [])
+        if ltp_events:
+            ltp = ltp_summary(ltp_events, pos["first_ts"], pos["price"], pos["total_size"])
+            ltp_matched += 1
+            if ltp["ltp_confirmed"]:
+                ltp_confirmed += 1
+        else:
+            ltp = {
+                "ltp_total": 0, "ltp_nearby": 0,
+                "ltp_nearest_price": "", "ltp_nearest_size": "",
+                "ltp_nearest_side": "", "ltp_nearest_time": "",
+                "ltp_nearest_delta_sec": "",
+                "ltp_price_match": False, "ltp_size_match": False,
+                "ltp_confirmed": False,
+            }
+
+        ltp_status = "—"
+        if ltp["ltp_confirmed"]:
+            ltp_status = "CONFIRMED (price+size)"
+        elif ltp["ltp_price_match"]:
+            ltp_status = "PRICE MATCH"
+        elif ltp["ltp_nearby"] > 0:
+            ltp_status = f"NEARBY ({ltp['ltp_nearby']} within ±60s)"
+        elif ltp["ltp_total"] > 0:
+            ltp_status = f"TOKEN MATCH ({ltp['ltp_total']} LTPs)"
+
+        # Source file origins
+        wallet_file = pos.get("wallet_source_file", "")
+        wallet_rows = pos.get("wallet_source_rows", [])
+        wallet_rows_str = ", ".join(str(r) for r in wallet_rows)
+        ltp_src_file = ltp.get("ltp_nearest_source_file", "")
+        ltp_src_row = ltp.get("ltp_nearest_source_row", "")
+
+        # Only include positions with at least some match
+        has_match = match_level != "NONE" or ltp["ltp_total"] > 0
+        if not has_match:
+            continue
 
         csv_rows.append({
             "event_slug": pos["event_slug"],
@@ -322,28 +489,47 @@ def main():
             "num_fills": pos["num_fills"],
             "trade_time_est": ts_sec_to_est(pos["first_ts"]),
             "trade_date": ts_sec_to_est(pos["first_ts"])[:10],
+            "match_level": match_level,
+            "result": win_str,
+            "ltp_total": ltp["ltp_total"],
+            "ltp_nearby": ltp["ltp_nearby"],
+            "ltp_nearest_price": ltp["ltp_nearest_price"],
+            "ltp_nearest_size": ltp["ltp_nearest_size"],
+            "ltp_nearest_side": ltp["ltp_nearest_side"],
+            "ltp_nearest_time": ltp["ltp_nearest_time"],
+            "ltp_nearest_delta_sec": ltp["ltp_nearest_delta_sec"],
+            "ltp_confirmed": ltp["ltp_confirmed"],
+            "wallet_source_file": wallet_file,
+            "wallet_source_rows": wallet_rows_str,
+            "ltp_source_file": ltp_src_file,
+            "ltp_source_row": ltp_src_row,
             "token_id": pos["asset"],
             "condition_id": cond_id,
-            "match_level": match_level,
-            "sweeper_total_events": ctx["total"],
-            "sweeper_nearby_events": ctx["nearby"],
-            "sweeper_dates": sw_date_str,
-            "best_bid_at_trade": ctx["best_bid"],
-            "best_ask_at_trade": ctx["best_ask"],
-            "result": win_str,
         })
 
-    print("\n" + "═" * 95)
-    print(f"MATCH SUMMARY ({len(positions)} positions total):")
-    print(f"  CONDITION_ID matches:          {cond_matches}")
-    print(f"  EXACT matches (slug + token):  {exact_matches}")
-    print(f"  SLUG-ONLY matches (diff day):  {slug_only_matches}")
-    print(f"  NO match in sweeper:           {no_match}")
+    # ── Summary ──────────────────────────────────────────────────────────────
+    confirmed_rows = [r for r in csv_rows if r["ltp_confirmed"]]
 
-    if no_match > 0:
-        print(f"\n  ⚠  {no_match} positions had NO sweeper data.")
-        print("     This means the sweeper was not running during those market windows.")
-        print("     Ensure the sweeper runs continuously with: python monitor_multi_events.py continuous --markets BTC ETH SOL XRP --duration 15")
+    print(f"\n{len(positions)} wallet positions  |  {len(csv_rows)} with sweeper data  |  {no_match} no data (sweeper not running)")
+    print(f"{ltp_matched} with LTP events  |  {len(confirmed_rows)} confirmed (price + size match within ±60s)\n")
+
+    if confirmed_rows:
+        print("═" * 95)
+        print(f"CONFIRMED MATCHES ({len(confirmed_rows)}):")
+        for r in confirmed_rows:
+            print("─" * 95)
+            print(f"  Market:      {r['event_slug']}  |  {r['outcome']}  |  {r['side']}")
+            print(f"  Wallet:      price={r['price']}  size={r['total_size']}  USDC=${r['total_usdc']}")
+            print(f"  Wallet time: {r['trade_time_est']} EST")
+            print(f"  Wallet src:  {r['wallet_source_file']}  row(s): {r['wallet_source_rows']}")
+            print(f"  LTP match:   price={r['ltp_nearest_price']}  size={r['ltp_nearest_size']}  side={r['ltp_nearest_side']}  Δ {r['ltp_nearest_delta_sec']}s")
+            print(f"  LTP src:     {r['ltp_source_file']}  row: {r['ltp_source_row']}")
+            print(f"  Result:      {r['result']}")
+    else:
+        print("No confirmed LTP matches (price + size within ±60s).")
+        if ltp_matched > 0:
+            print(f"  {ltp_matched} position(s) had LTP events on the same token but no exact fill match.")
+            print("  This usually means the sweeper wasn't capturing at the exact moment of the trade.")
 
     if csv_rows:
         with open(args.output, "w", newline="") as f:
